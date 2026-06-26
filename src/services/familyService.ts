@@ -66,4 +66,8 @@ export class FamilyService {
     const updatedFamily = await familyRepository.updateFamilyName(familyId, nombre);
     return updatedFamily;
   }
+
+  async getFamilyMembers(familyId: string) {
+    return await familyRepository.getFamilyMembers(familyId);
+  }
 }

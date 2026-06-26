@@ -211,3 +211,51 @@ export const updateFamilyName = async (req: Request, res: Response): Promise<voi
     res.status(500).json({ message: 'Error interno al actualizar el nombre del hogar.' });
   }
 };
+
+/**
+ * GET /familia/miembros
+ *
+ * ✅ Obtiene la lista de perfiles de todos los miembros del hogar familiar.
+ *
+ * 🔐 REQUIERE: JWT válido (cualquier miembro de la familia autenticado)
+ *
+ * 📥 BODY: No requiere body.
+ *
+ * 📤 RESPUESTA EXITOSA 200:
+ * [
+ *   {
+ *     "id": "uuid-del-miembro",
+ *     "email": "miembro@habitik.cl",
+ *     "nombre": "Pedro",
+ *     "rol": "Miembro",
+ *     "xp": 120,
+ *     "nivel": 2,
+ *     "monedas": 50,
+ *     "created_at": "2025-01-15T14:30:00.000Z"
+ *   },
+ *   ...
+ * ]
+ *
+ * ❌ ERRORES:
+ *   400 — El usuario no pertenece a ningún hogar
+ *   401 — Token JWT inválido/expirado
+ *   500 — Error interno
+ */
+export const getFamilyMembers = async (req: Request, res: Response): Promise<void> => {
+  const familyId = req.auth?.family_id;
+
+  if (!familyId) {
+    res.status(400).json({
+      message: 'No perteneces a ningún grupo familiar. Únete o crea uno primero.'
+    });
+    return;
+  }
+
+  try {
+    const members = await familyService.getFamilyMembers(familyId);
+    res.status(200).json(members);
+  } catch (error) {
+    console.error('[familyController.getFamilyMembers]', error);
+    res.status(500).json({ message: 'Error interno al obtener los miembros de la familia.' });
+  }
+};

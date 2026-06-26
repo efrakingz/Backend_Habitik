@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getInviteToken, joinFamily, updateFamilyName } from '../controllers/familyController';
+import { getInviteToken, joinFamily, updateFamilyName, getFamilyMembers } from '../controllers/familyController';
 import { verifyToken, requireAdmin } from '../middleware/auth';
 
 const router = Router();
@@ -12,5 +12,8 @@ router.post('/join', verifyToken, joinFamily);
 
 // HU 1.1 CA-1.1-2: Editar nombre del hogar (bloqueado 60 días, solo admin)
 router.patch('/nombre', verifyToken, requireAdmin, updateFamilyName);
+
+// Listado de miembros del hogar (cualquier miembro autenticado)
+router.get('/miembros', verifyToken, getFamilyMembers);
 
 export default router;

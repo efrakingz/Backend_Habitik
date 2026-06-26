@@ -332,6 +332,31 @@ async function runTests() {
       console.log('✅ Ducha válida registrada correctamente.');
     }
 
+    // ────────────────────────────────────────────────────────────────────────
+    // 12. GET /familia/miembros - Listar los miembros de la familia
+    // ────────────────────────────────────────────────────────────────────────
+    console.log('\nStep 12: Listando los miembros del hogar familiar...');
+    const membersRes = await fetch(`${BASE_URL}/familia/miembros`, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${miembroToken}`
+      }
+    });
+
+    const membersData = await membersRes.json();
+    console.log(`Status: ${membersRes.status}`);
+    console.log('Respuesta:', JSON.stringify(membersData, null, 2));
+
+    if (membersRes.status !== 200) {
+      throw new Error('Fallo al listar los miembros de la familia.');
+    }
+
+    if (!Array.isArray(membersData) || membersData.length < 2) {
+      throw new Error('Se esperaba una lista de al menos 2 miembros (Jefe y Miembro).');
+    } else {
+      console.log(`✅ Listado de miembros validado correctamente (${membersData.length} miembros encontrados).`);
+    }
+
     console.log('\n' + '='.repeat(60));
     console.log('🎉 ¡TODOS LOS ENDPOINTS HAN SIDO VALIDADOS CON ÉXITO! 🚀');
     console.log('='.repeat(60));
