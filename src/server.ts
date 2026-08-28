@@ -9,6 +9,9 @@ import familyRoutes from './routes/familyRoutes';
 import onboardingRoutes from './routes/onboardingRoutes';
 import showerRoutes from './routes/showerRoutes';
 
+//Importar todas las rutas del Sprint 2 
+import ecoRoutes from './routes/ecoRoutes';
+
 dotenv.config();
 
 /**
@@ -99,6 +102,11 @@ app.use('/onboarding', onboardingRoutes);
 
 // HU 2.1: Retos (cronómetro de ducha con validación anti-trampa)
 app.use('/reto', showerRoutes);
+
+// 2. REGISTRO DE LA RUTA DEL ECO-PUZZLE:
+// Esta declaración asocia el prefijo '/eco' con todas las rutas definidas dentro de ecoRoutes.ts
+// Quedará expuesto públicamente como: POST /eco/completar
+app.use('/eco', ecoRoutes);
 
 // ── Health Check ──────────────────────────────────────────────────────────────
 // Endpoint raíz para verificar que la API esté activa (útil para Railway y monitores)
