@@ -46,8 +46,11 @@ export class AuthService {
         id: userId,
         email,
         nombre,
-        avatar_letra: nombre.charAt(0).toUpperCase(),
-        avatar_color: '#2e7d32',
+        avatar: {
+          letra: nombre.charAt(0).toUpperCase(),
+          color: '#2e7d32',
+          url: null
+        },
         rol: 'Jefe', // rol de la BD
         xp: 0,
         nivel: 1,

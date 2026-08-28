@@ -29,16 +29,19 @@ export class UserRepository {
   async createProfile(profile: Partial<Profile>, client?: PoolClient): Promise<Profile> {
     const sql = `
       INSERT INTO public.profiles 
-      (id, email, nombre, avatar_letra, avatar_color, rol, xp, nivel, monedas) 
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) 
+      (id, email, nombre, avatar, rol, xp, nivel, monedas)
+      VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8)
       RETURNING *
     `;
     const params = [
       profile.id,
       profile.email?.toLowerCase().trim(),
       profile.nombre,
-      profile.avatar_letra || 'U',
-      profile.avatar_color || '#2e7d32',
+      JSON.stringify(profile.avatar || {
+        letra: profile.nombre?.charAt(0).toUpperCase() || 'U',
+        color: '#2e7d32',
+        url: null
+      }),
       profile.rol || 'miembro',
       profile.xp || 0,
       profile.nivel || 1,

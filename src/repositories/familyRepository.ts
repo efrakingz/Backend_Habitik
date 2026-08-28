@@ -51,7 +51,7 @@ export class FamilyRepository {
 
   async getFamilyMembers(familyId: string): Promise<any[]> {
     const res = await query(
-      `SELECT id, email, nombre, avatar_letra, avatar_color, avatar_url, rol, xp, nivel, monedas, created_at 
+      `SELECT id, email, nombre, avatar, rol, xp, nivel, monedas, created_at
        FROM public.profiles 
        WHERE family_id = $1 
        ORDER BY xp DESC, nombre ASC`,

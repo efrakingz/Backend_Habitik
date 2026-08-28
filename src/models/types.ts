@@ -45,7 +45,11 @@ export interface Family {
   family_code: string;  // Código único de 6 caracteres para unirse (ej. "AB12CD")
   meta_luz?: number;    // Meta mensual de consumo de luz (kWh)
   meta_agua?: number;   // Meta mensual de consumo de agua (m³)
-  avatar_url?: string;  // URL de la foto/avatar del hogar
+  avatar?: {
+    url?: string | null;
+    color?: string;
+    emoji?: string;
+  };                    // Objeto visual del hogar almacenado como JSONB
   created_at: Date;     // Fecha de creación — usada para validar el bloqueo de 60 días
 }
 
@@ -69,9 +73,11 @@ export interface Profile {
   id: string;                     // UUID — mismo que users.id (son la misma persona)
   email: string;
   nombre: string;
-  avatar_letra?: string;          // Inicial del nombre para avatar generado (ej. "C")
-  avatar_color?: string;          // Color hex del avatar (ej. "#2e7d32")
-  avatar_url?: string;            // URL de foto de perfil personalizada
+  avatar?: {
+    letra?: string;
+    color?: string;
+    url?: string | null;
+  };                              // Objeto visual del perfil almacenado como JSONB
   rol?: string;                   // 'Jefe' | 'Miembro' | 'Co-Admin'
   family_id?: string | null;      // UUID del hogar al que pertenece (null si no tiene hogar)
   xp?: number;                    // Puntos de experiencia acumulados

@@ -1,0 +1,266 @@
+-- ============================================================
+-- Habitik: Modelo alternativo hibrido para PostgreSQL
+-- Archivo de comparacion contra: database.sql
+-- ============================================================
+--
+-- Objetivo:
+-- - Mantener normalizadas las entidades principales.
+-- - Usar JSONB para datos variables, visuales o semiestructurados.
+-- - Reducir columnas rigidas sin perder relaciones, filtros ni reportes.
+--
+-- Cambios principales frente al modelo anterior:
+-- - families.avatar_url -> families.avatar JSONB
+-- - profiles.avatar_letra/avatar_color/avatar_url -> profiles.avatar JSONB
+-- - bills.empresa/cuenta/tarifa/imagen_url -> bills.metadata JSONB + ocr_result JSONB
+-- - evidences.avatar/color/avatar_url/imagen_url -> snapshot_usuario JSONB + media JSONB
+-- - reto_validations.usuario/avatar/color/evidencias TEXT[] -> snapshot_usuario JSONB + evidencias JSONB
+-- - Se conservan columnas clave para consultas frecuentes: ids, family_id, user_id,
+--   estado, xp, monedas, tipo, consumo, monto, periodo y fechas.
+
+-- ============================================================
+-- 1. Usuarios: credenciales y seguridad
+-- ============================================================
+CREATE TABLE IF NOT EXISTS public.users (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    email VARCHAR(255) UNIQUE NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ============================================================
+-- 2. Familias / hogares
+-- ============================================================
+CREATE TABLE IF NOT EXISTS public.families (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    nombre VARCHAR(100) NOT NULL,
+    family_code VARCHAR(100) UNIQUE,
+    meta_luz INTEGER DEFAULT 0,
+    meta_agua INTEGER DEFAULT 0,
+    avatar JSONB DEFAULT '{"url": null, "color": "#2e7d32", "emoji": "home"}'::jsonb,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ============================================================
+-- 3. Perfiles de usuario
+-- ============================================================
+CREATE TABLE IF NOT EXISTS public.profiles (
+    id UUID PRIMARY KEY REFERENCES public.users(id) ON DELETE CASCADE,
+    email VARCHAR(255) NOT NULL,
+    nombre VARCHAR(100) NOT NULL,
+    avatar JSONB DEFAULT '{"letra": "U", "color": "#2e7d32", "url": null}'::jsonb,
+    rol VARCHAR(50) DEFAULT 'miembro', -- 'miembro' | 'jefe' | 'jefa' | 'co-admin'
+    family_id UUID REFERENCES public.families(id) ON DELETE SET NULL,
+    xp INTEGER DEFAULT 0,
+    nivel INTEGER DEFAULT 1,
+    monedas INTEGER DEFAULT 0,
+    trivia_correct_count INTEGER DEFAULT 0,
+    trivia_last_updated VARCHAR(100),
+    daily_bonus_claimed_at VARCHAR(100),
+    onboarding_answers JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ============================================================
+-- 4. Evidencias / feed familiar
+-- ============================================================
+CREATE TABLE IF NOT EXISTS public.evidences (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+    family_id UUID NOT NULL REFERENCES public.families(id) ON DELETE CASCADE,
+    accion VARCHAR(255) NOT NULL,
+    descripcion TEXT,
+    likes INTEGER DEFAULT 0,
+    xp INTEGER DEFAULT 0,
+    emoji VARCHAR(20) DEFAULT 'star',
+    snapshot_usuario JSONB DEFAULT '{}'::jsonb,
+    media JSONB DEFAULT '[]'::jsonb,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Ejemplo de snapshot_usuario:
+-- {"nombre": "Pedro", "avatar": {"letra": "P", "color": "#2e7d32", "url": null}}
+--
+-- Ejemplo de media:
+-- [{"tipo": "foto", "url": "/uploads/evidencia1.jpg", "mime": "image/jpeg"}]
+
+-- ============================================================
+-- 5. Tareas y retos
+-- ============================================================
+CREATE TABLE IF NOT EXISTS public.tasks (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    family_id UUID NOT NULL REFERENCES public.families(id) ON DELETE CASCADE,
+    tarea VARCHAR(255) NOT NULL,
+    asignado_id UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
+    hecho BOOLEAN DEFAULT FALSE,
+    xp INTEGER DEFAULT 0,
+    tipo VARCHAR(50) DEFAULT 'general',
+    config JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- config permite guardar reglas variables por tipo de reto sin crear columnas nuevas.
+-- Ejemplo: {"requiere_evidencia": true, "monedas": 20, "duracion_objetivo_segundos": 300}
+
+-- ============================================================
+-- 6. Boletas / recibos de luz y agua
+-- ============================================================
+CREATE TABLE IF NOT EXISTS public.bills (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    family_id UUID NOT NULL REFERENCES public.families(id) ON DELETE CASCADE,
+    tipo VARCHAR(50) NOT NULL, -- 'luz' | 'agua'
+    consumo NUMERIC(10,2) NOT NULL,
+    monto NUMERIC(12,2) NOT NULL,
+    periodo VARCHAR(50) NOT NULL,
+    metadata JSONB DEFAULT '{}'::jsonb,
+    ocr_result JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Ejemplo de metadata:
+-- {
+--   "empresa": "Esval",
+--   "cuenta": "123456",
+--   "tarifa": "BT1",
+--   "imagen_url": "/uploads/boleta.png"
+-- }
+--
+-- Ejemplo de ocr_result:
+-- {
+--   "confidence": 0.91,
+--   "raw_text": "...",
+--   "campos_detectados": {"consumo": "14.5", "monto": "18300"}
+-- }
+
+-- ============================================================
+-- 7. Recompensas familiares
+-- ============================================================
+CREATE TABLE IF NOT EXISTS public.family_rewards (
+    id BIGINT PRIMARY KEY, -- millisecondsSinceEpoch generado por el cliente
+    family_id UUID NOT NULL REFERENCES public.families(id) ON DELETE CASCADE,
+    titulo VARCHAR(255) NOT NULL,
+    descripcion TEXT,
+    emoji VARCHAR(20) DEFAULT 'gift',
+    costo INTEGER DEFAULT 100,
+    disponible BOOLEAN DEFAULT TRUE,
+    creador_id UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
+    metadata JSONB DEFAULT '{}'::jsonb,
+    last_redeemed_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- metadata permite guardar reglas variables:
+-- {"limite_por_mes": 1, "categoria": "familia", "requiere_aprobacion": true}
+
+-- ============================================================
+-- 8. Validaciones de retos
+-- ============================================================
+CREATE TABLE IF NOT EXISTS public.reto_validations (
+    id BIGINT PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+    family_id UUID NOT NULL REFERENCES public.families(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+    reto VARCHAR(255) NOT NULL,
+    hora VARCHAR(50) DEFAULT 'Recien',
+    xp INTEGER DEFAULT 0,
+    monedas INTEGER DEFAULT 0,
+    evidencias JSONB DEFAULT '[]'::jsonb,
+    snapshot_usuario JSONB DEFAULT '{}'::jsonb,
+    requiere_evidencia BOOLEAN DEFAULT FALSE,
+    estado VARCHAR(50) DEFAULT 'pendiente', -- 'pendiente' | 'aprobado' | 'rechazado'
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Ejemplo de evidencias:
+-- [
+--   {"tipo": "foto", "url": "/uploads/reto1.jpg"},
+--   {"tipo": "nota", "texto": "Separe residuos organicos"}
+-- ]
+
+-- ============================================================
+-- 9. Logros desbloqueados
+-- ============================================================
+CREATE TABLE IF NOT EXISTS public.achievements (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+    logro_key VARCHAR(100) NOT NULL,
+    metadata JSONB DEFAULT '{}'::jsonb,
+    desbloqueado_en TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(user_id, logro_key)
+);
+
+-- ============================================================
+-- 10. Notificaciones
+-- ============================================================
+CREATE TABLE IF NOT EXISTS public.notifications (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+    title VARCHAR(255) NOT NULL,
+    desc_text TEXT NOT NULL,
+    visual JSONB DEFAULT '{"icon": "notifications", "color": "#388E3C"}'::jsonb,
+    payload JSONB DEFAULT '{}'::jsonb,
+    is_read BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ============================================================
+-- 11. Tokens QR para familias
+-- ============================================================
+CREATE TABLE IF NOT EXISTS public.qr_tokens (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    family_id UUID NOT NULL REFERENCES public.families(id) ON DELETE CASCADE,
+    token VARCHAR(100) UNIQUE NOT NULL,
+    used BOOLEAN DEFAULT FALSE,
+    expires_at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ============================================================
+-- 12. Registro de ducha
+-- ============================================================
+CREATE TABLE IF NOT EXISTS public.shower_logs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+    duracion_segundos INTEGER NOT NULL,
+    estado VARCHAR(50) NOT NULL, -- 'valido' | 'invalido'
+    metadata JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- metadata permite ampliar el reto sin alterar tabla:
+-- {"litros_estimados": 45, "origen": "cronometro_app", "version_regla": "sprint1"}
+
+-- ============================================================
+-- Indices relacionales
+-- ============================================================
+CREATE INDEX IF NOT EXISTS idx_profiles_family ON public.profiles(family_id);
+CREATE INDEX IF NOT EXISTS idx_evidences_family ON public.evidences(family_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_family ON public.tasks(family_id);
+CREATE INDEX IF NOT EXISTS idx_bills_family ON public.bills(family_id);
+CREATE INDEX IF NOT EXISTS idx_family_rewards_family ON public.family_rewards(family_id);
+CREATE INDEX IF NOT EXISTS idx_reto_validations_family_estado ON public.reto_validations(family_id, estado);
+CREATE INDEX IF NOT EXISTS idx_achievements_user ON public.achievements(user_id);
+CREATE INDEX IF NOT EXISTS idx_notifications_user ON public.notifications(user_id);
+CREATE INDEX IF NOT EXISTS idx_qr_tokens_token ON public.qr_tokens(token);
+CREATE INDEX IF NOT EXISTS idx_shower_logs_user ON public.shower_logs(user_id);
+
+-- ============================================================
+-- Indices JSONB para consultas sobre objetos
+-- ============================================================
+CREATE INDEX IF NOT EXISTS idx_profiles_avatar_gin ON public.profiles USING GIN (avatar);
+CREATE INDEX IF NOT EXISTS idx_profiles_onboarding_answers_gin ON public.profiles USING GIN (onboarding_answers);
+CREATE INDEX IF NOT EXISTS idx_bills_metadata_gin ON public.bills USING GIN (metadata);
+CREATE INDEX IF NOT EXISTS idx_bills_ocr_result_gin ON public.bills USING GIN (ocr_result);
+CREATE INDEX IF NOT EXISTS idx_evidences_media_gin ON public.evidences USING GIN (media);
+CREATE INDEX IF NOT EXISTS idx_reto_validations_evidencias_gin ON public.reto_validations USING GIN (evidencias);
+CREATE INDEX IF NOT EXISTS idx_notifications_payload_gin ON public.notifications USING GIN (payload);
+
+-- ============================================================
+-- Nota tecnica para comparacion
+-- ============================================================
+-- Este modelo no reemplaza automaticamente al actual.
+-- Es una propuesta alternativa para evaluar si conviene migrar columnas
+-- visuales, OCR, evidencias y configuraciones variables hacia JSONB.
+--
+-- Recomendacion:
+-- - Usar database.sql si se prefiere una estructura simple y explicita.
+-- - Usar este modelo si el equipo quiere flexibilidad para datos variables
+--   sin alterar la base con cada cambio de UI, OCR o reto.
