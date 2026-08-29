@@ -1,166 +1,169 @@
 import express from 'express';
+import http from 'http';
+import { Server as SocketIOServer } from 'socket.io';
+import { Client as PgClient } from 'pg';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { pool } from './config/db';
 
-// Importar todas las rutas del Sprint 1
+// Importar rutas de Habitik
 import authRoutes from './routes/authRoutes';
 import familyRoutes from './routes/familyRoutes';
 import onboardingRoutes from './routes/onboardingRoutes';
 import showerRoutes from './routes/showerRoutes';
-
-//Importar todas las rutas del Sprint 2 
 import ecoRoutes from './routes/ecoRoutes';
+import notificationRoutes from './routes/notificationRoutes';
 
 dotenv.config();
-
-/**
- * ============================================================
- * SERVIDOR PRINCIPAL — Habitik Backend API (Sprint 1)
- * ============================================================
- *
- * Este es el punto de entrada de toda la aplicación Express.
- * Se encarga de:
- *   1. Configurar middlewares globales (CORS, parseo JSON)
- *   2. Registrar las rutas de la API
- *   3. Levantar el servidor HTTP en el puerto configurado
- *   4. Validar la conexión con PostgreSQL (Railway)
- *
- * 🌐 URL BASE LOCAL:    http://localhost:3000
- * 🌐 URL PRODUCCIÓN:    https://<tu-app>.up.railway.app
- *
- * ============================================================
- * MAPA COMPLETO DE ENDPOINTS — Sprint 1
- * ============================================================
- *
- * [PÚBLICO — Sin autenticación]
- *   POST  /auth/register       → Registrar Jefe de Familia + crear Hogar
- *   POST  /auth/login          → Iniciar sesión (retorna JWT)
- *
- * [AUTENTICADO — Requiere header: Authorization: Bearer <token>]
- *   GET   /familia/invite      → Generar token de invitación QR (solo admin/Jefe)
- *   POST  /familia/join        → Unirse al hogar con un token de invitación
- *   PATCH /familia/nombre      → Cambiar nombre del hogar (solo admin, bloqueado 60 días)
- *   POST  /onboarding          → Enviar cuestionario inicial (diferente por rol)
- *   POST  /reto/ducha          → Registrar duración de ducha (anti-trampa < 3 min)
- *
- * ============================================================
- * CONFIGURACIÓN DE ENTORNO (.env)
- * ============================================================
- *
- * PORT          → Puerto donde corre el servidor (default: 3000)
- * DATABASE_URL  → URL de conexión a PostgreSQL de Railway
- *                 Formato: postgresql://user:pass@host.railway.app:5432/db
- * JWT_SECRET    → Clave secreta para firmar y verificar los tokens JWT
- * NODE_ENV      → 'development' (local) | 'production' (Railway)
- *
- * ============================================================
- * TABLAS EN POSTGRESQL (Railway) — Sprint 1
- * ============================================================
- *
- * public.users          → Credenciales (email, password_hash)
- * public.profiles       → Perfil del usuario (nombre, rol, xp, family_id, etc.)
- * public.families       → Hogares (nombre, family_code, metas de consumo)
- * public.qr_tokens      → Tokens de invitación temporales (TTL 10 min)
- * public.shower_logs    → Historial de duchas (⚠️ debe crearse manualmente)
- *
- * SQL para crear shower_logs:
- *   CREATE TABLE public.shower_logs (
- *     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
- *     user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
- *     duracion_segundos INTEGER NOT NULL,
- *     estado VARCHAR(50) NOT NULL,
- *     created_at TIMESTAMPTZ DEFAULT NOW()
- *   );
- */
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// ── Middlewares Globales ──────────────────────────────────────────────────────
+// Crear servidor HTTP y vincular Socket.io
+const server = http.createServer(app);
+const io = new SocketIOServer(server, {
+  cors: {
+    origin: '*',
+    methods: ['GET', 'POST', 'PATCH', 'DELETE'],
+  },
+});
 
-// CORS: permite que el frontend (Flutter/web) consuma la API desde cualquier origen.
-// En producción se puede restringir a dominios específicos.
+// Guardar instancia de io en la app para accederla en controladores
+app.set('io', io);
+
+// ── Middlewares Globales ──────────────────────────────────────────────
 app.use(cors());
-
-// Parsear body de peticiones JSON: convierte el body de la petición en req.body
 app.use(express.json());
-
-// Parsear body de formularios HTML (por si se necesita)
 app.use(express.urlencoded({ extended: true }));
 
-// ── Registro de Rutas ─────────────────────────────────────────────────────────
+// ── Gestión de Salas de Socket.io ─────────────────────────────────────
+io.on('connection', (socket) => {
+  console.log(`⚡ [Socket.io] Cliente conectado: ${socket.id}`);
 
-// HU 5.1 + HU 1.1: Autenticación (registro y login)
-app.use('/auth', authRoutes);
+  // Unirse a la sala de su familia (soporta UUID en string)
+  socket.on('unirse_familia', (familyId: string | number) => {
+    if (familyId) {
+      const room = `familia_${familyId}`;
+      socket.join(room);
+      console.log(`🏠 [Socket.io] Socket ${socket.id} se unió a sala: ${room}`);
+    }
+  });
 
-// HU 1.1 + HU 1.2: Gestión del Hogar Familiar (invitación QR, unirse, editar nombre)
-app.use('/familia', familyRoutes);
+  socket.on('salir_familia', (familyId: string | number) => {
+    if (familyId) {
+      const room = `familia_${familyId}`;
+      socket.leave(room);
+      console.log(`🚪 [Socket.io] Socket ${socket.id} salió de sala: ${room}`);
+    }
+  });
 
-// HU 1.3: Onboarding (cuestionario inicial diferenciado por rol)
-app.use('/onboarding', onboardingRoutes);
-
-// HU 2.1: Retos (cronómetro de ducha con validación anti-trampa)
-app.use('/reto', showerRoutes);
-
-// 2. REGISTRO DE LA RUTA DEL ECO-PUZZLE:
-// Esta declaración asocia el prefijo '/eco' con todas las rutas definidas dentro de ecoRoutes.ts
-// Quedará expuesto públicamente como: POST /eco/completar
-app.use('/eco', ecoRoutes);
-
-// ── Health Check ──────────────────────────────────────────────────────────────
-// Endpoint raíz para verificar que la API esté activa (útil para Railway y monitores)
-app.get('/', (_req, res) => {
-  res.json({
-    status: 'online',
-    app: 'Habitik Backend API — Sprint 1',
-    version: '1.0.0',
-    endpoints: {
-      public: {
-        register: 'POST /auth/register',
-        login:    'POST /auth/login'
-      },
-      authenticated: {
-        invite:     'GET /familia/invite    [admin]',
-        join:       'POST /familia/join',
-        rename:     'PATCH /familia/nombre  [admin]',
-        onboarding: 'POST /onboarding',
-        shower:     'POST /reto/ducha'
-      }
-    },
-    timestamp: new Date().toISOString()
+  socket.on('disconnect', () => {
+    console.log(`🔌 [Socket.io] Cliente desconectado: ${socket.id}`);
   });
 });
 
-// ── Manejo de rutas no encontradas ───────────────────────────────────────────
+// ── Listener PostgreSQL LISTEN / NOTIFY para eventos de base de datos ─
+if (process.env.DATABASE_URL) {
+  const isProduction =
+    process.env.NODE_ENV === 'production' ||
+    process.env.DATABASE_URL.includes('railway') ||
+    process.env.DATABASE_URL.includes('render');
+
+  const pgListener = new PgClient({
+    connectionString: process.env.DATABASE_URL,
+    ssl: isProduction ? { rejectUnauthorized: false } : false,
+  });
+
+  pgListener
+    .connect()
+    .then(() => {
+      pgListener.query('LISTEN canal_eventos_familia');
+      console.log('📡 [PostgreSQL] Escuchando activamente canal_eventos_familia');
+    })
+    .catch((err) => {
+      console.error('⚠️ [PostgreSQL] Error conectando pgListener:', err.message);
+    });
+
+  pgListener.on('notification', (msg) => {
+    try {
+      if (msg.payload) {
+        const data = JSON.parse(msg.payload);
+        if (data.family_id) {
+          io.to(`familia_${data.family_id}`).emit('evento_en_vivo', data);
+          console.log(`🔔 [Trigger Event] Retransmitido a sala familia_${data.family_id}:`, data.titulo);
+        }
+      }
+    } catch (e) {
+      console.error('⚠️ Error parseando payload de notificación PostgreSQL:', e);
+    }
+  });
+}
+
+// ── Registro de Rutas ──────────────────────────────────────────────────
+app.use('/auth', authRoutes);
+app.use('/familia', familyRoutes);
+app.use('/onboarding', onboardingRoutes);
+app.use('/reto', showerRoutes);
+app.use('/eco', ecoRoutes);
+
+// Rutas de Notificaciones y Alertas Familiares
+app.use('/notifications', notificationRoutes);
+app.use('/api', notificationRoutes); // Alias para compatibilidad
+
+// ── Health Check ───────────────────────────────────────────────────────
+app.get('/', (_req, res) => {
+  res.json({
+    status: 'online',
+    app: 'Habitik Backend API con Realtime WebSockets',
+    version: '2.0.0',
+    endpoints: {
+      public: {
+        register: 'POST /auth/register',
+        login: 'POST /auth/login',
+      },
+      notifications: {
+        sendEvent: 'POST /notifications/evento',
+        getHistory: 'GET /notifications/familia/:family_id',
+        clearHistory: 'DELETE /notifications/familia/:family_id',
+      },
+      authenticated: {
+        invite: 'GET /familia/invite [admin]',
+        join: 'POST /familia/join',
+        rename: 'PATCH /familia/nombre [admin]',
+        onboarding: 'POST /onboarding',
+        shower: 'POST /reto/ducha',
+      },
+    },
+    timestamp: new Date().toISOString(),
+  });
+});
+
+// ── Manejo de rutas no encontradas ─────────────────────────────────────
 app.use((_req, res) => {
   res.status(404).json({ message: 'Ruta no encontrada.' });
 });
 
-// ── Manejo Global de Errores No Controlados ───────────────────────────────────
+// ── Manejo Global de Errores ───────────────────────────────────────────
 app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error('[Unhandled Error]', err.stack);
   res.status(500).json({
     message: 'Error interno del servidor.',
-    // Solo mostrar el detalle del error en desarrollo, no en producción
-    error: process.env.NODE_ENV === 'production' ? undefined : err.message
+    error: process.env.NODE_ENV === 'production' ? undefined : err.message,
   });
 });
 
-// ── Arrancar Servidor ─────────────────────────────────────────────────────────
-app.listen(PORT, async () => {
+// ── Arrancar Servidor HTTP y WebSockets ────────────────────────────────
+server.listen(PORT, async () => {
   console.log('='.repeat(55));
-  console.log('  🏠 Habitik Backend API — Sprint 1');
+  console.log('  🌱 Habitik Backend API & Realtime WebSockets');
   console.log(`  🚀 Servidor: http://localhost:${PORT}`);
   console.log('='.repeat(55));
 
-  // Verificar la conexión con PostgreSQL al arrancar
   try {
     const res = await pool.query('SELECT NOW()');
     console.log(`  ✅ DB PostgreSQL conectada: ${res.rows[0].now}`);
   } catch (err) {
     console.error('  ❌ [CRÍTICO] No se pudo conectar a la base de datos.');
-    console.error('     Verifica la variable DATABASE_URL en el archivo .env');
     if (err instanceof Error) console.error(' ', err.message);
   }
 
