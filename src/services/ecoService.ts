@@ -117,3 +117,5 @@ export class RetoService {
     }
   }
 }
+
+export { RetoService as EcoService };
