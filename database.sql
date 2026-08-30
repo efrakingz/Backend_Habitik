@@ -1,9 +1,7 @@
--- ============================================================
--- Habitik: Esquema Completo para PostgreSQL (Sprint 1)
--- Compatible con Postgres 13+ (usa gen_random_uuid() nativo)
--- ============================================================
+-- Esquema principal hibrido de Habitik para PostgreSQL.
 
--- 1. Tabla de Usuarios (Credenciales y Seguridad)
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
 CREATE TABLE IF NOT EXISTS public.users (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     email VARCHAR(255) UNIQUE NOT NULL,
@@ -11,26 +9,22 @@ CREATE TABLE IF NOT EXISTS public.users (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 2. Tabla de Familias (Grupos)
 CREATE TABLE IF NOT EXISTS public.families (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     nombre VARCHAR(100) NOT NULL,
     family_code VARCHAR(100) UNIQUE,
     meta_luz INTEGER DEFAULT 0,
     meta_agua INTEGER DEFAULT 0,
-    avatar_url TEXT,
+    avatar JSONB DEFAULT '{"url": null, "color": "#2e7d32", "emoji": "home"}'::jsonb,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 3. Tabla de Perfiles de Usuario
 CREATE TABLE IF NOT EXISTS public.profiles (
     id UUID PRIMARY KEY REFERENCES public.users(id) ON DELETE CASCADE,
     email VARCHAR(255) NOT NULL,
     nombre VARCHAR(100) NOT NULL,
-    avatar_letra VARCHAR(5) DEFAULT 'U',
-    avatar_color VARCHAR(10) DEFAULT '#2e7d32',
-    avatar_url TEXT,
-    rol VARCHAR(50) DEFAULT 'miembro', -- 'miembro' | 'jefe' | 'jefa' | 'co-admin'
+    avatar JSONB DEFAULT '{"letra": "U", "color": "#2e7d32", "url": null}'::jsonb,
+    rol VARCHAR(50) DEFAULT 'miembro',
     family_id UUID REFERENCES public.families(id) ON DELETE SET NULL,
     xp INTEGER DEFAULT 0,
     nivel INTEGER DEFAULT 1,
@@ -38,29 +32,24 @@ CREATE TABLE IF NOT EXISTS public.profiles (
     trivia_correct_count INTEGER DEFAULT 0,
     trivia_last_updated VARCHAR(100),
     daily_bonus_claimed_at VARCHAR(100),
-    onboarding_answers JSONB,
+    onboarding_answers JSONB DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 4. Tabla de Evidencias (Feed)
 CREATE TABLE IF NOT EXISTS public.evidences (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
     family_id UUID NOT NULL REFERENCES public.families(id) ON DELETE CASCADE,
-    autor VARCHAR(100) NOT NULL,
-    avatar VARCHAR(5) DEFAULT 'U',
-    color VARCHAR(10) DEFAULT '#2e7d32',
-    avatar_url TEXT,
     accion VARCHAR(255) NOT NULL,
     descripcion TEXT,
     likes INTEGER DEFAULT 0,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
     xp INTEGER DEFAULT 0,
-    emoji VARCHAR(10) DEFAULT '🌟',
-    imagen_url TEXT
+    emoji VARCHAR(20) DEFAULT 'star',
+    snapshot_usuario JSONB DEFAULT '{}'::jsonb,
+    media JSONB DEFAULT '[]'::jsonb,
+    created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 5. Tabla de Tareas y Retos
 CREATE TABLE IF NOT EXISTS public.tasks (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     family_id UUID NOT NULL REFERENCES public.families(id) ON DELETE CASCADE,
@@ -69,78 +58,84 @@ CREATE TABLE IF NOT EXISTS public.tasks (
     hecho BOOLEAN DEFAULT FALSE,
     xp INTEGER DEFAULT 0,
     tipo VARCHAR(50) DEFAULT 'general',
+    config JSONB DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 6. Tabla de Recibos (Luz y Agua)
 CREATE TABLE IF NOT EXISTS public.bills (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     family_id UUID NOT NULL REFERENCES public.families(id) ON DELETE CASCADE,
-    tipo VARCHAR(50) NOT NULL, -- 'luz' | 'agua'
-    consumo VARCHAR(50) NOT NULL,
-    monto VARCHAR(50) NOT NULL,
+    tipo VARCHAR(50) NOT NULL,
+    consumo NUMERIC(10,2) NOT NULL,
+    monto NUMERIC(12,2) NOT NULL,
     periodo VARCHAR(50) NOT NULL,
-    empresa VARCHAR(100),
-    cuenta VARCHAR(100),
-    tarifa VARCHAR(100),
-    imagen_url TEXT,
+    metadata JSONB DEFAULT '{}'::jsonb,
+    ocr_result JSONB DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 7. Tabla de Recompensas de la Tienda
 CREATE TABLE IF NOT EXISTS public.family_rewards (
-    id BIGINT PRIMARY KEY, -- millisecondsSinceEpoch generado por el cliente
+    id BIGINT PRIMARY KEY,
     family_id UUID NOT NULL REFERENCES public.families(id) ON DELETE CASCADE,
     titulo VARCHAR(255) NOT NULL,
     descripcion TEXT,
-    emoji VARCHAR(10) DEFAULT '🎁',
+    emoji VARCHAR(20) DEFAULT 'gift',
     costo INTEGER DEFAULT 100,
     disponible BOOLEAN DEFAULT TRUE,
+    es_familiar BOOLEAN NOT NULL DEFAULT FALSE,
     creador_id UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
+    metadata JSONB DEFAULT '{}'::jsonb,
     last_redeemed_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 8. Tabla de Validaciones de Retos (Espera del Jefe)
+ALTER TABLE public.family_rewards
+ADD COLUMN IF NOT EXISTS es_familiar BOOLEAN NOT NULL DEFAULT FALSE;
+
+CREATE TABLE IF NOT EXISTS public.family_reward_redemptions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    reward_id BIGINT NOT NULL REFERENCES public.family_rewards(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+    family_id UUID NOT NULL REFERENCES public.families(id) ON DELETE CASCADE,
+    costo_pagado INTEGER NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS public.reto_validations (
     id BIGINT PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
     family_id UUID NOT NULL REFERENCES public.families(id) ON DELETE CASCADE,
     user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
-    usuario VARCHAR(100) NOT NULL,
-    avatar VARCHAR(5) DEFAULT 'U',
-    color VARCHAR(10) DEFAULT '#2e7d32',
     reto VARCHAR(255) NOT NULL,
-    hora VARCHAR(50) DEFAULT 'Recién',
+    hora VARCHAR(50) DEFAULT 'Recien',
     xp INTEGER DEFAULT 0,
     monedas INTEGER DEFAULT 0,
-    evidencias TEXT[] DEFAULT '{}',
+    evidencias JSONB DEFAULT '[]'::jsonb,
+    snapshot_usuario JSONB DEFAULT '{}'::jsonb,
     requiere_evidencia BOOLEAN DEFAULT FALSE,
-    estado VARCHAR(50) DEFAULT 'pendiente', -- 'pendiente' | 'aprobado' | 'rechazado'
+    estado VARCHAR(50) DEFAULT 'pendiente',
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 9. Tabla de Logros Desbloqueados
 CREATE TABLE IF NOT EXISTS public.achievements (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
     logro_key VARCHAR(100) NOT NULL,
+    metadata JSONB DEFAULT '{}'::jsonb,
     desbloqueado_en TIMESTAMPTZ DEFAULT NOW(),
     UNIQUE(user_id, logro_key)
 );
 
--- 10. Tabla de Notificaciones
 CREATE TABLE IF NOT EXISTS public.notifications (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
     title VARCHAR(255) NOT NULL,
     desc_text TEXT NOT NULL,
-    icon_code VARCHAR(50) DEFAULT 'notifications',
-    color_hex VARCHAR(10) DEFAULT '#388E3C',
+    visual JSONB DEFAULT '{"icon": "notifications", "color": "#388E3C"}'::jsonb,
+    payload JSONB DEFAULT '{}'::jsonb,
     is_read BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 11. Tabla de Tokens QR para Familias
 CREATE TABLE IF NOT EXISTS public.qr_tokens (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     family_id UUID NOT NULL REFERENCES public.families(id) ON DELETE CASCADE,
@@ -150,23 +145,90 @@ CREATE TABLE IF NOT EXISTS public.qr_tokens (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 12. Tabla de Registro de Ducha (Sprint 1)
 CREATE TABLE IF NOT EXISTS public.shower_logs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
     duracion_segundos INTEGER NOT NULL,
-    estado VARCHAR(50) NOT NULL, -- 'valido' | 'invalido'
+    estado VARCHAR(50) NOT NULL,
+    metadata JSONB DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Creación de Índices para optimizar velocidad de consulta
+ALTER TABLE public.families
+ADD COLUMN IF NOT EXISTS avatar JSONB DEFAULT '{"url": null, "color": "#2e7d32", "emoji": "home"}'::jsonb;
+
+ALTER TABLE public.profiles
+ADD COLUMN IF NOT EXISTS avatar JSONB DEFAULT '{"letra": "U", "color": "#2e7d32", "url": null}'::jsonb;
+
+UPDATE public.profiles
+SET avatar = jsonb_build_object(
+    'letra', COALESCE(NULLIF(avatar->>'letra', ''), LEFT(nombre, 1), 'U'),
+    'color', COALESCE(NULLIF(avatar->>'color', ''), '#2e7d32'),
+    'url', avatar->'url'
+)
+WHERE avatar IS NULL OR avatar = '{}'::jsonb;
+
+ALTER TABLE public.evidences
+ADD COLUMN IF NOT EXISTS snapshot_usuario JSONB DEFAULT '{}'::jsonb;
+
+ALTER TABLE public.evidences
+ADD COLUMN IF NOT EXISTS media JSONB DEFAULT '[]'::jsonb;
+
+ALTER TABLE public.tasks
+ADD COLUMN IF NOT EXISTS config JSONB DEFAULT '{}'::jsonb;
+
+ALTER TABLE public.bills
+ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}'::jsonb;
+
+ALTER TABLE public.bills
+ADD COLUMN IF NOT EXISTS ocr_result JSONB DEFAULT '{}'::jsonb;
+
+ALTER TABLE public.family_rewards
+ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}'::jsonb;
+
+ALTER TABLE public.reto_validations
+ALTER COLUMN evidencias DROP DEFAULT;
+
+ALTER TABLE public.reto_validations
+ALTER COLUMN evidencias TYPE JSONB USING to_jsonb(evidencias);
+
+ALTER TABLE public.reto_validations
+ALTER COLUMN evidencias SET DEFAULT '[]'::jsonb;
+
+ALTER TABLE public.reto_validations
+ADD COLUMN IF NOT EXISTS snapshot_usuario JSONB DEFAULT '{}'::jsonb;
+
+ALTER TABLE public.achievements
+ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}'::jsonb;
+
+ALTER TABLE public.notifications
+ADD COLUMN IF NOT EXISTS visual JSONB DEFAULT '{"icon": "notifications", "color": "#388E3C"}'::jsonb;
+
+ALTER TABLE public.notifications
+ADD COLUMN IF NOT EXISTS payload JSONB DEFAULT '{}'::jsonb;
+
+ALTER TABLE public.shower_logs
+ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}'::jsonb;
+
 CREATE INDEX IF NOT EXISTS idx_profiles_family ON public.profiles(family_id);
 CREATE INDEX IF NOT EXISTS idx_evidences_family ON public.evidences(family_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_family ON public.tasks(family_id);
 CREATE INDEX IF NOT EXISTS idx_bills_family ON public.bills(family_id);
 CREATE INDEX IF NOT EXISTS idx_family_rewards_family ON public.family_rewards(family_id);
+CREATE INDEX IF NOT EXISTS idx_reward_redemptions_user_reward ON public.family_reward_redemptions(user_id, reward_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_reward_redemptions_family_reward ON public.family_reward_redemptions(family_id, reward_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_reto_validations_family_estado ON public.reto_validations(family_id, estado);
 CREATE INDEX IF NOT EXISTS idx_achievements_user ON public.achievements(user_id);
 CREATE INDEX IF NOT EXISTS idx_notifications_user ON public.notifications(user_id);
 CREATE INDEX IF NOT EXISTS idx_qr_tokens_token ON public.qr_tokens(token);
 CREATE INDEX IF NOT EXISTS idx_shower_logs_user ON public.shower_logs(user_id);
+CREATE INDEX IF NOT EXISTS idx_families_avatar_gin ON public.families USING GIN (avatar);
+CREATE INDEX IF NOT EXISTS idx_profiles_avatar_gin ON public.profiles USING GIN (avatar);
+CREATE INDEX IF NOT EXISTS idx_profiles_onboarding_answers_gin ON public.profiles USING GIN (onboarding_answers);
+CREATE INDEX IF NOT EXISTS idx_tasks_config_gin ON public.tasks USING GIN (config);
+CREATE INDEX IF NOT EXISTS idx_bills_metadata_gin ON public.bills USING GIN (metadata);
+CREATE INDEX IF NOT EXISTS idx_bills_ocr_result_gin ON public.bills USING GIN (ocr_result);
+CREATE INDEX IF NOT EXISTS idx_evidences_media_gin ON public.evidences USING GIN (media);
+CREATE INDEX IF NOT EXISTS idx_family_rewards_metadata_gin ON public.family_rewards USING GIN (metadata);
+CREATE INDEX IF NOT EXISTS idx_reto_validations_evidencias_gin ON public.reto_validations USING GIN (evidencias);
+CREATE INDEX IF NOT EXISTS idx_notifications_payload_gin ON public.notifications USING GIN (payload);

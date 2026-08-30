@@ -20,7 +20,19 @@
  *   - En Producción:    node test-endpoints.js https://project-habitik-production.up.railway.app
  */
 
+require('dotenv').config();
+const { Pool } = require('pg');
+
 const BASE_URL = process.argv[2] || 'http://localhost:3000';
+const isProductionDb = process.env.NODE_ENV === 'production' ||
+  (process.env.DATABASE_URL && process.env.DATABASE_URL.includes('railway'));
+
+const testDbPool = process.env.DATABASE_URL
+  ? new Pool({
+      connectionString: process.env.DATABASE_URL,
+      ssl: isProductionDb ? { rejectUnauthorized: false } : false
+    })
+  : null;
 
 console.log('='.repeat(60));
 console.log(`🧪 Iniciando Pruebas de Validación del Backend Habitik`);
@@ -36,6 +48,17 @@ let jefeToken = '';
 let miembroToken = '';
 let familyId = '';
 let inviteToken = '';
+
+async function grantTestCoins(userId, amount) {
+  if (!testDbPool) {
+    throw new Error('DATABASE_URL es requerido para preparar monedas de prueba.');
+  }
+
+  await testDbPool.query(
+    'UPDATE public.profiles SET monedas = $1 WHERE id = $2',
+    [amount, userId]
+  );
+}
 
 async function runTests() {
   try {
@@ -357,6 +380,143 @@ async function runTests() {
       console.log(`✅ Listado de miembros validado correctamente (${membersData.length} miembros encontrados).`);
     }
 
+    // Pruebas de recompensas y canjes.
+    console.log('\nStep 13: Preparando monedas de prueba para el miembro...');
+    await grantTestCoins(miembroData.user_id, 200);
+    console.log('✅ Monedas de prueba asignadas correctamente.');
+
+    console.log('\nStep 14: Creando recompensa individual...');
+    const createIndividualRewardRes = await fetch(`${BASE_URL}/recompensas`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${jefeToken}`
+      },
+      body: JSON.stringify({
+        titulo: '30 min videojuegos',
+        descripcion: 'Beneficio personal diario',
+        emoji: 'gamepad',
+        costo: 10,
+        es_familiar: false
+      })
+    });
+
+    const individualRewardData = await createIndividualRewardRes.json();
+    console.log(`Status: ${createIndividualRewardRes.status}`);
+    console.log('Respuesta:', JSON.stringify(individualRewardData, null, 2));
+
+    if (createIndividualRewardRes.status !== 201) {
+      throw new Error('Fallo al crear recompensa individual.');
+    }
+
+    console.log('\nStep 15: Canjeando recompensa individual...');
+    const redeemIndividualRes = await fetch(`${BASE_URL}/recompensas/${individualRewardData.id}/canjear`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${miembroToken}`
+      }
+    });
+
+    const redeemIndividualData = await redeemIndividualRes.json();
+    console.log(`Status: ${redeemIndividualRes.status}`);
+    console.log('Respuesta:', JSON.stringify(redeemIndividualData, null, 2));
+
+    if (redeemIndividualRes.status !== 201) {
+      throw new Error('Fallo al canjear recompensa individual.');
+    }
+
+    console.log('\nStep 16: Reintentando canje individual el mismo día...');
+    const redeemIndividualAgainRes = await fetch(`${BASE_URL}/recompensas/${individualRewardData.id}/canjear`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${miembroToken}`
+      }
+    });
+
+    const redeemIndividualAgainData = await redeemIndividualAgainRes.json();
+    console.log(`Status: ${redeemIndividualAgainRes.status} (Esperado: 409)`);
+    console.log('Respuesta:', JSON.stringify(redeemIndividualAgainData, null, 2));
+
+    if (redeemIndividualAgainRes.status !== 409) {
+      throw new Error('Se esperaba bloqueo de canje diario individual.');
+    }
+
+    console.log('\nStep 17: Creando recompensa familiar...');
+    const createFamilyRewardRes = await fetch(`${BASE_URL}/recompensas`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${jefeToken}`
+      },
+      body: JSON.stringify({
+        titulo: 'Cine familiar',
+        descripcion: 'Actividad mensual del hogar',
+        emoji: 'film',
+        costo: 30,
+        es_familiar: true,
+        metadata: {
+          categoria: 'familia',
+          limite_por_mes: 1
+        }
+      })
+    });
+
+    const familyRewardData = await createFamilyRewardRes.json();
+    console.log(`Status: ${createFamilyRewardRes.status}`);
+    console.log('Respuesta:', JSON.stringify(familyRewardData, null, 2));
+
+    if (createFamilyRewardRes.status !== 201) {
+      throw new Error('Fallo al crear recompensa familiar.');
+    }
+
+    console.log('\nStep 18: Canjeando recompensa familiar...');
+    const redeemFamilyRes = await fetch(`${BASE_URL}/recompensas/${familyRewardData.id}/canjear`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${miembroToken}`
+      }
+    });
+
+    const redeemFamilyData = await redeemFamilyRes.json();
+    console.log(`Status: ${redeemFamilyRes.status}`);
+    console.log('Respuesta:', JSON.stringify(redeemFamilyData, null, 2));
+
+    if (redeemFamilyRes.status !== 201) {
+      throw new Error('Fallo al canjear recompensa familiar.');
+    }
+
+    console.log('\nStep 19: Reintentando canje familiar el mismo mes...');
+    const redeemFamilyAgainRes = await fetch(`${BASE_URL}/recompensas/${familyRewardData.id}/canjear`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${miembroToken}`
+      }
+    });
+
+    const redeemFamilyAgainData = await redeemFamilyAgainRes.json();
+    console.log(`Status: ${redeemFamilyAgainRes.status} (Esperado: 409)`);
+    console.log('Respuesta:', JSON.stringify(redeemFamilyAgainData, null, 2));
+
+    if (redeemFamilyAgainRes.status !== 409) {
+      throw new Error('Se esperaba bloqueo de canje mensual familiar.');
+    }
+
+    console.log('\nStep 20: Reactivando ventana actual de recompensa familiar...');
+    const reactivateFamilyRewardRes = await fetch(`${BASE_URL}/recompensas/${familyRewardData.id}/canjeos/ventana-actual`, {
+      method: 'DELETE',
+      headers: {
+        'Authorization': `Bearer ${jefeToken}`
+      }
+    });
+
+    const reactivateFamilyRewardData = await reactivateFamilyRewardRes.json();
+    console.log(`Status: ${reactivateFamilyRewardRes.status}`);
+    console.log('Respuesta:', JSON.stringify(reactivateFamilyRewardData, null, 2));
+
+    if (reactivateFamilyRewardRes.status !== 200 || reactivateFamilyRewardData.registros_eliminados < 1) {
+      throw new Error('Fallo al reactivar ventana de canje familiar.');
+    }
+
     console.log('\n' + '='.repeat(60));
     console.log('🎉 ¡TODOS LOS ENDPOINTS HAN SIDO VALIDADOS CON ÉXITO! 🚀');
     console.log('='.repeat(60));
@@ -365,6 +525,10 @@ async function runTests() {
     console.error('\n❌ ERROR EN LAS PRUEBAS:', error.message);
     console.log('='.repeat(60));
     process.exit(1);
+  } finally {
+    if (testDbPool) {
+      await testDbPool.end();
+    }
   }
 }
 

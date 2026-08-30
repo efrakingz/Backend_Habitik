@@ -14,6 +14,7 @@ export class ShowerService {
           user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
           duracion_segundos INTEGER NOT NULL,
           estado VARCHAR(50) NOT NULL,
+          metadata JSONB DEFAULT '{}'::jsonb,
           created_at TIMESTAMPTZ DEFAULT NOW()
         )
       `);

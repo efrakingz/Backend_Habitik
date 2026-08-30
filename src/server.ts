@@ -13,6 +13,7 @@ import onboardingRoutes from './routes/onboardingRoutes';
 import showerRoutes from './routes/showerRoutes';
 import ecoRoutes from './routes/ecoRoutes';
 import notificationRoutes from './routes/notificationRoutes';
+import rewardRoutes from './routes/rewardRoutes';
 
 dotenv.config();
 
@@ -105,6 +106,7 @@ app.use('/familia', familyRoutes);
 app.use('/onboarding', onboardingRoutes);
 app.use('/reto', showerRoutes);
 app.use('/eco', ecoRoutes);
+app.use('/recompensas', rewardRoutes);
 
 // Rutas de Notificaciones y Alertas Familiares
 app.use('/notifications', notificationRoutes);
@@ -132,6 +134,8 @@ app.get('/', (_req, res) => {
         rename: 'PATCH /familia/nombre [admin]',
         onboarding: 'POST /onboarding',
         shower: 'POST /reto/ducha',
+        rewards: 'GET/POST /recompensas',
+        redeem: 'POST /recompensas/:id/canjear',
       },
     },
     timestamp: new Date().toISOString(),
