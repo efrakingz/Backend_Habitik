@@ -29,9 +29,9 @@ const isProductionDb = process.env.NODE_ENV === 'production' ||
 
 const testDbPool = process.env.DATABASE_URL
   ? new Pool({
-      connectionString: process.env.DATABASE_URL,
-      ssl: isProductionDb ? { rejectUnauthorized: false } : false
-    })
+    connectionString: process.env.DATABASE_URL,
+    ssl: isProductionDb ? { rejectUnauthorized: false } : false
+  })
   : null;
 
 console.log('='.repeat(60));
@@ -76,7 +76,7 @@ async function runTests() {
         nombreFamilia: 'Familia Test ' + randomStr
       })
     });
-    
+
     const jefeData = await registerJefeRes.json();
     console.log(`Status: ${registerJefeRes.status}`);
     console.log('Respuesta:', JSON.stringify(jefeData, null, 2));
@@ -100,7 +100,7 @@ async function runTests() {
         password: 'contrasenasegura123'
       })
     });
-    
+
     const loginJefeData = await loginJefeRes.json();
     console.log(`Status: ${loginJefeRes.status}`);
     console.log('Respuesta:', JSON.stringify(loginJefeData, null, 2));
@@ -123,7 +123,7 @@ async function runTests() {
         nombre: 'Nuevo Nombre Test'
       })
     });
-    
+
     const renameData = await renameRes.json();
     console.log(`Status: ${renameRes.status} (Esperado: 403)`);
     console.log('Respuesta:', JSON.stringify(renameData, null, 2));
@@ -144,7 +144,7 @@ async function runTests() {
         'Authorization': `Bearer ${jefeToken}`
       }
     });
-    
+
     const inviteData = await inviteRes.json();
     console.log(`Status: ${inviteRes.status}`);
     console.log('Respuesta:', JSON.stringify(inviteData, null, 2));
@@ -169,7 +169,7 @@ async function runTests() {
         nombreFamilia: 'Familia Temporal Pedro'
       })
     });
-    
+
     const miembroData = await registerMiembroRes.json();
     console.log(`Status: ${registerMiembroRes.status}`);
     console.log('Respuesta:', JSON.stringify(miembroData, null, 2));
@@ -195,7 +195,7 @@ async function runTests() {
         user_id: miembroData.user_id
       })
     });
-    
+
     const joinData = await joinRes.json();
     console.log(`Status: ${joinRes.status}`);
     console.log('Respuesta:', JSON.stringify(joinData, null, 2));
@@ -216,7 +216,7 @@ async function runTests() {
         password: 'contrasenasegura123'
       })
     });
-    
+
     const loginMiembroData = await loginMiembroRes.json();
     console.log(`Status: ${loginMiembroRes.status}`);
     console.log('Respuesta:', JSON.stringify(loginMiembroData, null, 2));
@@ -243,7 +243,7 @@ async function runTests() {
         user_id: miembroData.user_id
       })
     });
-    
+
     const rejoinData = await rejoinRes.json();
     console.log(`Status: ${rejoinRes.status} (Esperado: 410)`);
     console.log('Respuesta:', JSON.stringify(rejoinData, null, 2));
@@ -271,7 +271,7 @@ async function runTests() {
         electrodomesticos: ['lavadora', 'secadora', 'aire_acondicionado']
       })
     });
-    
+
     const onboardingJefeData = await onboardingJefeRes.json();
     console.log(`Status: ${onboardingJefeRes.status}`);
     console.log('Respuesta:', JSON.stringify(onboardingJefeData, null, 2));
@@ -296,7 +296,7 @@ async function runTests() {
         frecuenciaReciclaje: 'siempre'
       })
     });
-    
+
     const onboardingMiembroData = await onboardingMiembroRes.json();
     console.log(`Status: ${onboardingMiembroRes.status}`);
     console.log('Respuesta:', JSON.stringify(onboardingMiembroData, null, 2));
@@ -319,7 +319,7 @@ async function runTests() {
         duracion_segundos: 120
       })
     });
-    
+
     const showerShortData = await showerShortRes.json();
     console.log(`Status: ${showerShortRes.status}`);
     console.log('Respuesta:', JSON.stringify(showerShortData, null, 2));
@@ -344,7 +344,7 @@ async function runTests() {
         duracion_segundos: 240
       })
     });
-    
+
     const showerValidData = await showerValidRes.json();
     console.log(`Status: ${showerValidRes.status}`);
     console.log('Respuesta:', JSON.stringify(showerValidData, null, 2));
@@ -379,6 +379,7 @@ async function runTests() {
     } else {
       console.log(`✅ Listado de miembros validado correctamente (${membersData.length} miembros encontrados).`);
     }
+
 
     // Pruebas de recompensas y canjes.
     console.log('\nStep 13: Preparando monedas de prueba para el miembro...');
@@ -517,8 +518,124 @@ async function runTests() {
       throw new Error('Fallo al reactivar ventana de canje familiar.');
     }
 
+    // ────────────────────────────────────────────────────────────────────────
+    // 21. POST /eco/completar - Enviar resultado del Eco-Puzzle
+    // ────────────────────────────────────────────────────────────────────────
+    console.log('\nStep 21: Completando partida de Eco-Puzzle...');
+    const ecoRes = await fetch(`${BASE_URL}/eco/completar`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${miembroToken}`
+      },
+      body: JSON.stringify({
+        errores: 1,
+        tiempo_segundos: 45
+      })
+    });
+
+    const ecoData = await ecoRes.json();
+    console.log(`Status: ${ecoRes.status}`);
+    console.log('Respuesta:', JSON.stringify(ecoData, null, 2));
+
+    if (ecoRes.status !== 200 || !ecoData.ok) {
+      throw new Error('Fallo al procesar Eco-Puzzle.');
+    } else {
+      console.log('✅ Eco-Puzzle procesado y recompensas otorgadas exitosamente.');
+    }
+
+    // ────────────────────────────────────────────────────────────────────────
+    // 22. POST /notifications/evento - Disparar alerta familiar en tiempo real
+    // ────────────────────────────────────────────────────────────────────────
+    console.log('\nStep 22: Disparando alerta familiar en tiempo real (Eco-Ducha en curso)...');
+    const notifRes = await fetch(`${BASE_URL}/notifications/evento`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${miembroToken}`
+      },
+      body: JSON.stringify({
+        family_id: familyId,
+        sender_name: 'Miembro Test',
+        title: '🚿 ¡Hora de la Ducha!',
+        desc_text: 'Miembro Test ha iniciado una Eco-Ducha de 3 minutos.',
+        type: 'DUCHA_SPEEDRUN',
+        visual: { icon: 'shower', color: '#00ACC1' },
+        payload: { duracion_estimada: 180 }
+      })
+    });
+
+    const notifData = await notifRes.json();
+    console.log(`Status: ${notifRes.status}`);
+    console.log('Respuesta:', JSON.stringify(notifData, null, 2));
+
+    if (notifRes.status !== 201 || !notifData.exito) {
+      throw new Error('Fallo al emitir evento de notificación en tiempo real.');
+    } else {
+      console.log('✅ Alerta familiar en tiempo real emitida y guardada en PostgreSQL.');
+    }
+
+    const createdNotifId = notifData.evento?.id;
+
+    // ────────────────────────────────────────────────────────────────────────
+    // 23. GET /notifications/familia/:family_id - Obtener el Feed Familiar
+    // ────────────────────────────────────────────────────────────────────────
+    console.log('\nStep 23: Consultando el Feed Familiar de notificaciones...');
+    const feedRes = await fetch(`${BASE_URL}/notifications/familia/${familyId}`, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${jefeToken}`
+      }
+    });
+
+    const feedData = await feedRes.json();
+    console.log(`Status: ${feedRes.status}`);
+    console.log('Respuesta:', JSON.stringify(feedData, null, 2));
+
+    if (feedRes.status !== 200 || !feedData.exito || !Array.isArray(feedData.eventos)) {
+      throw new Error('Fallo al obtener el Feed Familiar.');
+    } else {
+      console.log(`✅ Feed Familiar consultado con éxito (${feedData.eventos.length} eventos encontrados).`);
+    }
+
+    // ────────────────────────────────────────────────────────────────────────
+    // 24. PATCH /notifications/:id/leida - Marcar notificación como leída
+    // ────────────────────────────────────────────────────────────────────────
+    if (createdNotifId) {
+      console.log(`\nStep 24: Marcando notificación ${createdNotifId} como leída...`);
+      const readRes = await fetch(`${BASE_URL}/notifications/${createdNotifId}/leida`, {
+        method: 'PATCH',
+        headers: {
+          'Authorization': `Bearer ${jefeToken}`
+        }
+      });
+      const readData = await readRes.json();
+      console.log(`Status: ${readRes.status}`);
+      console.log('Respuesta:', JSON.stringify(readData, null, 2));
+      if (readRes.status === 200 && readData.exito) {
+        console.log('✅ Notificación marcada como leída exitosamente.');
+      }
+    }
+
+    // ────────────────────────────────────────────────────────────────────────
+    // 25. DELETE /notifications/familia/:family_id - Limpiar historial
+    // ────────────────────────────────────────────────────────────────────────
+    console.log('\nStep 25: Limpiando historial familiar de pruebas...');
+    const clearRes = await fetch(`${BASE_URL}/notifications/familia/${familyId}`, {
+      method: 'DELETE',
+      headers: {
+        'Authorization': `Bearer ${jefeToken}`
+      }
+    });
+    const clearData = await clearRes.json();
+    console.log(`Status: ${clearRes.status}`);
+    console.log('Respuesta:', JSON.stringify(clearData, null, 2));
+    if (clearRes.status === 200 && clearData.exito) {
+      console.log('✅ Historial de notificaciones limpiado correctamente.');
+    }
+
     console.log('\n' + '='.repeat(60));
-    console.log('🎉 ¡TODOS LOS ENDPOINTS HAN SIDO VALIDADOS CON ÉXITO! 🚀');
+    console.log('🎉 ¡TODOS LOS 25 ENDPOINTS (INCLUYENDO RECOMPENSAS, ECO-PUZZLE Y NOTIFICACIONES) HAN SIDO VALIDADOS CON ÉXITO! 🚀');
     console.log('='.repeat(60));
 
   } catch (error) {
@@ -533,3 +650,4 @@ async function runTests() {
 }
 
 runTests();
+

@@ -42,6 +42,7 @@ export class NotificationService {
       creado_en: saved.created_at || new Date(),
     };
 
+    // Emisión en tiempo real vía Socket.io para clientes activos / en segundo plano
     if (io && saved.family_id) {
       io.to(`familia_${saved.family_id}`).emit('evento_en_vivo', eventPayload);
       console.log(`📡 [Socket.io] Evento emitido a sala familia_${saved.family_id}:`, saved.title);
