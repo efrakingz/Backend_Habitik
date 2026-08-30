@@ -14,6 +14,7 @@ import showerRoutes from './routes/showerRoutes';
 import ecoRoutes from './routes/ecoRoutes';
 import notificationRoutes from './routes/notificationRoutes';
 import rewardRoutes from './routes/rewardRoutes';
+import gamificationRoutes from './routes/gamificationRoutes';
 
 dotenv.config();
 
@@ -120,6 +121,7 @@ app.use('/onboarding', onboardingRoutes);
 app.use('/reto', showerRoutes);
 app.use('/eco', ecoRoutes);
 app.use('/rewards', rewardRoutes); // Rutas de Recompensas y Canjes
+app.use('/gamification', gamificationRoutes);
 
 // Rutas de Notificaciones y Alertas Familiares
 app.use('/notifications', notificationRoutes);
