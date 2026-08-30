@@ -119,7 +119,7 @@ app.use('/familia', familyRoutes);
 app.use('/onboarding', onboardingRoutes);
 app.use('/reto', showerRoutes);
 app.use('/eco', ecoRoutes);
-app.use('/recompensas', rewardRoutes);
+app.use('/rewards', rewardRoutes); // Rutas de Recompensas y Canjes
 
 // Rutas de Notificaciones y Alertas Familiares
 app.use('/notifications', notificationRoutes);
