@@ -13,6 +13,7 @@ import onboardingRoutes from './routes/onboardingRoutes';
 import showerRoutes from './routes/showerRoutes';
 import ecoRoutes from './routes/ecoRoutes';
 import notificationRoutes from './routes/notificationRoutes';
+import rewardRoutes from './routes/rewardRoutes';
 
 dotenv.config();
 
@@ -26,6 +27,9 @@ const io = new SocketIOServer(server, {
     origin: '*',
     methods: ['GET', 'POST', 'PATCH', 'DELETE'],
   },
+  pingTimeout: 60000,
+  pingInterval: 25000,
+  transports: ['websocket', 'polling'],
 });
 
 // Guardar instancia de io en la app para accederla en controladores
@@ -84,11 +88,21 @@ if (process.env.DATABASE_URL) {
       console.error('⚠️ [PostgreSQL] Error conectando pgListener:', err.message);
     });
 
+  const recentEmittedEvents = new Map<string, number>();
+
   pgListener.on('notification', (msg) => {
     try {
       if (msg.payload) {
         const data = JSON.parse(msg.payload);
         if (data.family_id) {
+          const now = Date.now();
+          const emitKey = `${data.id || data.titulo}_${data.family_id}`;
+          
+          if (recentEmittedEvents.has(emitKey) && (now - (recentEmittedEvents.get(emitKey) || 0) < 3000)) {
+            return; // Ya emitido recientemente por la API
+          }
+          recentEmittedEvents.set(emitKey, now);
+
           io.to(`familia_${data.family_id}`).emit('evento_en_vivo', data);
           console.log(`🔔 [Trigger Event] Retransmitido a sala familia_${data.family_id}:`, data.titulo);
         }
@@ -105,6 +119,7 @@ app.use('/familia', familyRoutes);
 app.use('/onboarding', onboardingRoutes);
 app.use('/reto', showerRoutes);
 app.use('/eco', ecoRoutes);
+app.use('/recompensas', rewardRoutes);
 
 // Rutas de Notificaciones y Alertas Familiares
 app.use('/notifications', notificationRoutes);
@@ -132,6 +147,8 @@ app.get('/', (_req, res) => {
         rename: 'PATCH /familia/nombre [admin]',
         onboarding: 'POST /onboarding',
         shower: 'POST /reto/ducha',
+        rewards: 'GET/POST /recompensas',
+        redeem: 'POST /recompensas/:id/canjear',
       },
     },
     timestamp: new Date().toISOString(),

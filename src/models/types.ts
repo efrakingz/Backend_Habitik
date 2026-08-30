@@ -93,3 +93,36 @@ export interface AppNotification {
   is_read?: boolean;
   created_at?: Date;
 }
+
+export interface FamilyReward {
+  id: number;
+  family_id: string;
+  titulo: string;
+  descripcion?: string | null;
+  emoji?: string;
+  costo: number;
+  disponible: boolean;
+  es_familiar: boolean;
+  creador_id?: string | null;
+  metadata?: Record<string, unknown>;
+  last_redeemed_at?: Date | null;
+  created_at: Date;
+}
+
+export interface FamilyRewardRedemption {
+  id: string;
+  reward_id: number;
+  user_id: string;
+  family_id: string;
+  costo_pagado: number;
+  created_at: Date;
+}
+
+export interface CreateFamilyRewardInput {
+  titulo: string;
+  descripcion?: string;
+  emoji?: string;
+  costo?: number;
+  es_familiar?: boolean;
+  metadata?: Record<string, unknown>;
+}

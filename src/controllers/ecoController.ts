@@ -9,9 +9,9 @@ export class EcoController {
    */
   static async completarEcoPuzzle(req: Request, res: Response) {
     try {
-      // Extraemos el 'userId' desde el token JWT inyectado en el middleware (req.user)
+      // Extraemos el 'userId' desde el token JWT inyectado en el middleware (req.auth)
       // O en su defecto, lo buscamos en el cuerpo de la petición (soporte de pruebas)
-      const userId = (req as any).user?.id || req.body.user_id;
+      const userId = req.auth?.user_id || (req as any).user?.id || req.body.user_id;
 
       // Desestructuramos los parámetros numéricos enviados en el JSON del body
       const { errores, tiempo_segundos } = req.body;

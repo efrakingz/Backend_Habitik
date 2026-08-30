@@ -14,8 +14,13 @@
 -- - bills.empresa/cuenta/tarifa/imagen_url -> bills.metadata JSONB + ocr_result JSONB
 -- - evidences.avatar/color/avatar_url/imagen_url -> snapshot_usuario JSONB + media JSONB
 -- - reto_validations.usuario/avatar/color/evidencias TEXT[] -> snapshot_usuario JSONB + evidencias JSONB
+-- - family_rewards.es_familiar diferencia reglas de canje individual/familiar
+-- - family_reward_redemptions guarda el historial transaccional de canjes
 -- - Se conservan columnas clave para consultas frecuentes: ids, family_id, user_id,
---   estado, xp, monedas, tipo, consumo, monto, periodo y fechas.
+--   estado, xp, monedas, tipo, consumo, monto, periodo, disponible,
+--   es_familiar y fechas.
+
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 -- ============================================================
 -- 1. Usuarios: credenciales y seguridad
@@ -142,14 +147,30 @@ CREATE TABLE IF NOT EXISTS public.family_rewards (
     emoji VARCHAR(20) DEFAULT 'gift',
     costo INTEGER DEFAULT 100,
     disponible BOOLEAN DEFAULT TRUE,
+    es_familiar BOOLEAN NOT NULL DEFAULT FALSE,
     creador_id UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
     metadata JSONB DEFAULT '{}'::jsonb,
     last_redeemed_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+ALTER TABLE public.family_rewards
+ADD COLUMN IF NOT EXISTS es_familiar BOOLEAN NOT NULL DEFAULT FALSE;
+
 -- metadata permite guardar reglas variables:
 -- {"limite_por_mes": 1, "categoria": "familia", "requiere_aprobacion": true}
+
+-- ============================================================
+-- 7.1 Historial de canjes de recompensas
+-- ============================================================
+CREATE TABLE IF NOT EXISTS public.family_reward_redemptions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    reward_id BIGINT NOT NULL REFERENCES public.family_rewards(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+    family_id UUID NOT NULL REFERENCES public.families(id) ON DELETE CASCADE,
+    costo_pagado INTEGER NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
 
 -- ============================================================
 -- 8. Validaciones de retos
@@ -236,6 +257,8 @@ CREATE INDEX IF NOT EXISTS idx_evidences_family ON public.evidences(family_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_family ON public.tasks(family_id);
 CREATE INDEX IF NOT EXISTS idx_bills_family ON public.bills(family_id);
 CREATE INDEX IF NOT EXISTS idx_family_rewards_family ON public.family_rewards(family_id);
+CREATE INDEX IF NOT EXISTS idx_reward_redemptions_user_reward ON public.family_reward_redemptions(user_id, reward_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_reward_redemptions_family_reward ON public.family_reward_redemptions(family_id, reward_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_reto_validations_family_estado ON public.reto_validations(family_id, estado);
 CREATE INDEX IF NOT EXISTS idx_achievements_user ON public.achievements(user_id);
 CREATE INDEX IF NOT EXISTS idx_notifications_user ON public.notifications(user_id);
