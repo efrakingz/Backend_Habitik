@@ -19,7 +19,14 @@ export class RewardService {
       );
       const profile = profileRes.rows[0];
 
-      if (!profile || profile.rol !== 'jefe') {
+      if (!profile) {
+        throw new Error('Perfil del usuario no encontrado.');
+      }
+
+      // Normaliza el rol a minúsculas para evitar fallos por "Jefe" vs "jefe"
+      const userRol = profile.rol ? profile.rol.toString().toLowerCase().trim() : '';
+
+      if (userRol !== 'jefe') {
         throw new Error('Solo el Jefe de Hogar tiene permisos para crear recompensas.');
       }
 
@@ -167,7 +174,9 @@ export class RewardService {
       const profileRes = await client.query('SELECT family_id, rol FROM public.profiles WHERE id = $1', [jefeId]);
       const profile = profileRes.rows[0];
 
-      if (!profile || profile.rol !== 'jefe') {
+      const userRol = profile?.rol ? profile.rol.toString().toLowerCase().trim() : '';
+
+      if (!profile || userRol !== 'jefe') {
         throw new Error('Solo el Jefe de Hogar tiene permisos para reactivar recompensas.');
       }
 
@@ -198,5 +207,5 @@ export class RewardService {
     } finally {
       client.release();
     }
-  }
+  } 
 }
