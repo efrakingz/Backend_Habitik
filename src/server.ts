@@ -15,6 +15,7 @@ import ecoRoutes from './routes/ecoRoutes';
 import notificationRoutes from './routes/notificationRoutes';
 import rewardRoutes from './routes/rewardRoutes';
 import gamificationRoutes from './routes/gamificationRoutes';
+import challengesRoutes from './routes/challengesRoutes';
 
 dotenv.config();
 
@@ -122,10 +123,12 @@ app.use('/reto', showerRoutes);
 app.use('/eco', ecoRoutes);
 app.use('/rewards', rewardRoutes); // Rutas de Recompensas y Canjes
 app.use('/gamification', gamificationRoutes);
+app.use('/', challengesRoutes);
 
 // Rutas de Notificaciones y Alertas Familiares
 app.use('/notifications', notificationRoutes);
 app.use('/api', notificationRoutes); // Alias para compatibilidad
+
 
 // ── Health Check ───────────────────────────────────────────────────────
 app.get('/', (_req, res) => {
