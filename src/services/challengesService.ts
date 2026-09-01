@@ -3,15 +3,16 @@ import { pool } from '../config/db';
 export class ChallengesService {
   /**
    * HU 2.1: Finalizar Speedrun de la Ducha
+   * Registra el intento con XP/monedas reales en 'shower_logs' y actualiza 'profiles'.
    */
-  static async finalizarDucha(userId: string, familyId: string, tiempoSegundos: number) {
+  static async finalizarDucha(userId: string, familyId: string | null, tiempoSegundos: number) {
     let xp = 0;
     let monedas = 0;
     let esValido = true;
     let estado = 'valido';
 
-    // Anti-trampa (< 180s es invalido)
-    if (tiempoSegundos < 180) {
+    // Reglas Anti-trampa y asignación de recompensas
+    if (tiempoSegundos < 180) { // < 3 min
       esValido = false;
       estado = 'invalido';
     } else if (tiempoSegundos <= 300) { // <= 5 min: +200 XP, +2 monedas
@@ -29,13 +30,16 @@ export class ChallengesService {
     try {
       await client.query('BEGIN');
 
-      // Insertar usando la estructura existente en tu base de datos
-      await client.query(`
+      // INSERT CORREGIDO: Pasa $6 (xp) y $7 (monedas) y devuelve la fila insertada con RETURNING *
+      const insertRes = await client.query(`
         INSERT INTO public.shower_logs (
           user_id, family_id, duracion_segundos, estado, es_valido, xp_otorgada, monedas_otorgadas
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7);
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        RETURNING *;
       `, [userId, familyId, tiempoSegundos, estado, esValido, xp, monedas]);
+
+      const logInsertado = insertRes.rows[0];
 
       let levelUp = false;
       let nuevoNivel = 1;
@@ -52,7 +56,6 @@ export class ChallengesService {
         totalXp = currentXp + xp;
         saldoMonedas = (prof.rows[0].monedas || 0) + monedas;
 
-        // Formula Nivel = floor(xp_total / 500) + 1
         nuevoNivel = Math.floor(totalXp / 500) + 1;
         levelUp = nuevoNivel > currentNivel;
 
@@ -66,11 +69,19 @@ export class ChallengesService {
           INSERT INTO public.historial_gamificacion (user_id, origen_actividad, monedas_otorgadas, xp_otorgada)
           VALUES ($1, 'speedrun_ducha', $2, $3);
         `, [userId, monedas, xp]);
+      } else {
+        const prof = await client.query(`SELECT xp, monedas, nivel FROM public.profiles WHERE id = $1;`, [userId]);
+        if (prof.rows.length > 0) {
+          totalXp = prof.rows[0].xp || 0;
+          saldoMonedas = prof.rows[0].monedas || 0;
+          nuevoNivel = prof.rows[0].nivel || 1;
+        }
       }
 
       await client.query('COMMIT');
 
       return {
+        log: logInsertado,
         es_valido: esValido,
         tiempo_segundos: tiempoSegundos,
         xp_ganada: xp,

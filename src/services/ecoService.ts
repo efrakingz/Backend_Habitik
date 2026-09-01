@@ -12,9 +12,9 @@ export class RetoService {
       const xpGanado = esValido ? 150 : 0;
       const monedasGanadas = esValido ? 2 : 0;
 
-      // 2. Consultar perfil actual del usuario en PostgreSQL
+      // 2. Consultar perfil actual del usuario en PostgreSQL (Se agrega 'nombre')
       const profileQuery = `
-        SELECT family_id, xp, nivel, monedas, onboarding_answers 
+        SELECT family_id, nombre, xp, nivel, monedas, onboarding_answers 
         FROM public.profiles 
         WHERE id = $1 FOR UPDATE;
       `;
@@ -73,15 +73,16 @@ export class RetoService {
         ]);
       }
 
-      // 3. Insertar el intento en la tabla reto_validations
+      // 3. Insertar el intento en la tabla reto_validations (Se incluye la columna 'usuario')
       const insertRetoQuery = `
         INSERT INTO public.reto_validations (
-          family_id, user_id, reto, xp, monedas, estado, evidencias
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+          family_id, user_id, reto, xp, monedas, estado, evidencias, usuario
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         RETURNING *;
       `;
       const evidenciaObj = JSON.stringify([{ errores, tiempo_segundos: tiempoSegundos }]);
       const estadoReto = esValido ? 'aprobado' : 'rechazado';
+      const usuarioNombre = profile.nombre || 'Usuario';
 
       const retoRes = await client.query(insertRetoQuery, [
         profile.family_id,
@@ -90,7 +91,8 @@ export class RetoService {
         xpGanado,
         monedasGanadas,
         estadoReto,
-        evidenciaObj
+        evidenciaObj,
+        usuarioNombre
       ]);
 
       await client.query('COMMIT');
