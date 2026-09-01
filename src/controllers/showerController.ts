@@ -39,26 +39,18 @@ export const registerShower = async (req: Request, res: Response): Promise<void>
     // Delegar transacción completa SQL a ChallengesService
     const resultado = await ChallengesService.finalizarDucha(userId, familyId, duracion);
 
-    if (!resultado.es_valido) {
-      // Ducha menor a 3 minutos (< 180s) → regla anti-trampa activada
-      res.status(200).json({
-        message: 'Registro guardado, pero marcado como inválido. La ducha fue menor a 3 minutos.',
-        log: resultado.log,
-        recompensas: {
-          xp_ganada: resultado.xp_ganada,
-          monedas_ganadas: resultado.monedas_ganadas,
-          total_xp: resultado.total_xp,
-          saldo_monedas: resultado.saldo_monedas,
-          nivel_actual: resultado.nivel_actual,
-          level_up: resultado.level_up
-        },
+    if (!resultado.guardado) {
+      // Caso en que la ducha duró menos de 4 minutos (< 240s) → No se guarda nada
+      res.status(400).json({
+        message: 'Acción rechazada: La duración mínima para activar y registrar el reto es de 4 minutos (240 segundos).',
+        guardado: false,
         valido: false,
-        razon: 'La duración mínima válida es de 3 minutos (180 segundos).'
+        razon: resultado.mensaje
       });
       return;
     }
 
-    // Ducha válida → guarda tiempo, suma XP/monedas y actualiza el perfil en PostgreSQL
+    // Ducha válida (>= 240s) → guarda registro en BD, otorga XP/monedas y actualiza el perfil
     const minutos = Math.floor(duracion / 60);
     const segundos = duracion % 60;
 
@@ -73,6 +65,7 @@ export const registerShower = async (req: Request, res: Response): Promise<void>
         nivel_actual: resultado.nivel_actual,
         level_up: resultado.level_up
       },
+      guardado: true,
       valido: true
     });
   } catch (error) {
