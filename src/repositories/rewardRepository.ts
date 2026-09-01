@@ -110,7 +110,7 @@ export class RewardRepository {
   async countIndividualRedemptionsToday(client: PoolClient, userId: string, rewardId: number): Promise<number> {
     const res = await client.query(
       `SELECT COUNT(*)::int AS total
-       FROM public.family_reward_redemptions
+       FROM public.canjes
        WHERE user_id = $1
          AND reward_id = $2
          AND created_at >= date_trunc('day', NOW())`,
@@ -122,7 +122,7 @@ export class RewardRepository {
   async countFamilyRedemptionsThisMonth(client: PoolClient, familyId: string, rewardId: number): Promise<number> {
     const res = await client.query(
       `SELECT COUNT(*)::int AS total
-       FROM public.family_reward_redemptions
+       FROM public.canjes
        WHERE family_id = $1
          AND reward_id = $2
          AND created_at >= date_trunc('month', NOW())`,
@@ -150,7 +150,7 @@ export class RewardRepository {
     cost: number
   ): Promise<FamilyRewardRedemption> {
     const res = await client.query(
-      `INSERT INTO public.family_reward_redemptions
+      `INSERT INTO public.canjes
        (reward_id, user_id, family_id, costo_pagado)
        VALUES ($1, $2, $3, $4)
        RETURNING *`,
@@ -170,11 +170,11 @@ export class RewardRepository {
 
   async clearCurrentRedemptionWindow(rewardId: number, familyId: string, esFamiliar: boolean): Promise<number> {
     const sql = esFamiliar
-      ? `DELETE FROM public.family_reward_redemptions
+      ? `DELETE FROM public.canjes
          WHERE reward_id = $1
            AND family_id = $2
            AND created_at >= date_trunc('month', NOW())`
-      : `DELETE FROM public.family_reward_redemptions
+      : `DELETE FROM public.canjes
          WHERE reward_id = $1
            AND family_id = $2
            AND created_at >= date_trunc('day', NOW())`;

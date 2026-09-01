@@ -7,14 +7,12 @@ export class RetoService {
     try {
       await client.query('BEGIN');
 
-      // 1. Validar reglas de la HU 2.4 (Máximo 3 errores en <= 60 segundos)
       const esValido = errores <= 3 && tiempoSegundos <= 60;
       const xpGanado = esValido ? 150 : 0;
       const monedasGanadas = esValido ? 2 : 0;
 
-      // 2. Consultar perfil actual del usuario en PostgreSQL (Se agrega 'nombre')
       const profileQuery = `
-        SELECT family_id, nombre, xp, nivel, monedas, onboarding_answers 
+        SELECT family_id, nombre, avatar, xp, nivel, monedas
         FROM public.profiles 
         WHERE id = $1 FOR UPDATE;
       `;
@@ -40,49 +38,36 @@ export class RetoService {
           levelUp = true;
         }
 
-        // Registrar 'eco_puzzle' en el objeto JSONB onboarding_answers para el bonus diario
-        const todayStr = new Date().toISOString().split('T')[0];
-        const onboardingAnswers = profile.onboarding_answers || {};
-        const dailyTracking = onboardingAnswers.daily_tracking || {};
-        const todayChallenges: string[] = dailyTracking[todayStr] || [];
-
-        if (!todayChallenges.includes('eco_puzzle')) {
-          todayChallenges.push('eco_puzzle');
-        }
-
-        const updatedOnboarding = {
-          ...onboardingAnswers,
-          daily_tracking: {
-            ...dailyTracking,
-            [todayStr]: todayChallenges
-          }
-        };
-
-        // Actualizar Perfil
         const updateProfileQuery = `
           UPDATE public.profiles
-          SET xp = $1, nivel = $2, monedas = $3, onboarding_answers = $4
-          WHERE id = $5;
+          SET xp = $1, nivel = $2, monedas = $3, ultima_actividad = CURRENT_DATE
+          WHERE id = $4;
         `;
         await client.query(updateProfileQuery, [
           xpTotal,
           nuevoNivel,
           saldoMonedas,
-          JSON.stringify(updatedOnboarding),
           userId
         ]);
+
+        await client.query(`
+          INSERT INTO public.historial_gamificacion (user_id, origen_actividad, monedas_otorgadas, xp_otorgada)
+          VALUES ($1, 'eco_puzzle', $2, $3);
+        `, [userId, monedasGanadas, xpGanado]);
       }
 
-      // 3. Insertar el intento en la tabla reto_validations (Se incluye la columna 'usuario')
       const insertRetoQuery = `
         INSERT INTO public.reto_validations (
-          family_id, user_id, reto, xp, monedas, estado, evidencias, usuario
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+          family_id, user_id, reto, xp, monedas, estado, evidencias, snapshot_usuario
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb)
         RETURNING *;
       `;
       const evidenciaObj = JSON.stringify([{ errores, tiempo_segundos: tiempoSegundos }]);
       const estadoReto = esValido ? 'aprobado' : 'rechazado';
-      const usuarioNombre = profile.nombre || 'Usuario';
+      const snapshotUsuario = JSON.stringify({
+        nombre: profile.nombre || 'Usuario',
+        avatar: profile.avatar || null
+      });
 
       const retoRes = await client.query(insertRetoQuery, [
         profile.family_id,
@@ -92,7 +77,7 @@ export class RetoService {
         monedasGanadas,
         estadoReto,
         evidenciaObj,
-        usuarioNombre
+        snapshotUsuario
       ]);
 
       await client.query('COMMIT');

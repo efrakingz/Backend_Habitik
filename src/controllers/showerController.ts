@@ -7,8 +7,7 @@ import { ChallengesService } from '../services/challengesService';
  * ============================================================
  */
 export const registerShower = async (req: Request, res: Response): Promise<void> => {
-  // Extraer userId del JWT (req.auth) o del body como fallback
-  const userId = req.auth?.user_id || (req as any).user?.id || req.body.user_id;
+  const userId = req.auth?.user_id || req.body.user_id;
   const familyId = req.auth?.family_id || req.body.family_id || null;
 
   if (!userId) {
@@ -36,11 +35,9 @@ export const registerShower = async (req: Request, res: Response): Promise<void>
   }
 
   try {
-    // Delegar transacción completa SQL a ChallengesService
     const resultado = await ChallengesService.finalizarDucha(userId, familyId, duracion);
 
     if (!resultado.guardado) {
-      // Caso en que la ducha duró menos de 4 minutos (< 240s) → No se guarda nada
       res.status(400).json({
         message: 'Acción rechazada: La duración mínima para activar y registrar el reto es de 4 minutos (240 segundos).',
         guardado: false,
@@ -50,7 +47,6 @@ export const registerShower = async (req: Request, res: Response): Promise<void>
       return;
     }
 
-    // Ducha válida (>= 240s) → guarda registro en BD, otorga XP/monedas y actualiza el perfil
     const minutos = Math.floor(duracion / 60);
     const segundos = duracion % 60;
 

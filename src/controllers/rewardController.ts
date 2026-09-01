@@ -4,7 +4,7 @@ import { RewardService } from '../services/rewardService';
 export class RewardController {
   static async crearRecompensa(req: Request, res: Response) {
     try {
-      const jefeId = (req as any).user?.id || req.body.user_id;
+      const jefeId = req.auth?.user_id || req.body.user_id;
       const { titulo, descripcion, costo_monedas, es_familiar } = req.body;
 
       if (!jefeId || !titulo || !costo_monedas) {
@@ -27,7 +27,7 @@ export class RewardController {
 
   static async listarRecompensas(req: Request, res: Response) {
     try {
-      const userId = (req as any).user?.id || req.query.user_id;
+      const userId = req.auth?.user_id || req.query.user_id;
       const rewards = await RewardService.listarRecompensasFamiliares(String(userId));
       return res.status(200).json({ ok: true, data: rewards });
     } catch (error: any) {
@@ -37,7 +37,7 @@ export class RewardController {
 
   static async canjearRecompensa(req: Request, res: Response) {
     try {
-      const userId = (req as any).user?.id || req.body.user_id;
+      const userId = req.auth?.user_id || req.body.user_id;
       const { reward_id } = req.body;
 
       if (!userId || !reward_id) {
@@ -53,7 +53,7 @@ export class RewardController {
 
   static async reactivarRecompensa(req: Request, res: Response) {
     try {
-      const jefeId = (req as any).user?.id || req.body.user_id;
+      const jefeId = req.auth?.user_id || req.body.user_id;
       const { reward_id, target_user_id } = req.body;
 
       if (!jefeId || !reward_id) {

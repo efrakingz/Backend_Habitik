@@ -63,11 +63,6 @@ export const login = async (req: Request, res: Response): Promise<void> => {
   }
 };
 
-/**
- * GET /perfil/:user_id
- * 
- * ✅ Obtiene la información del perfil gamificado actualizada desde PostgreSQL.
- */
 export const getPerfil = async (req: Request, res: Response): Promise<void> => {
   const { user_id } = req.params;
 
@@ -91,8 +86,6 @@ export const getPerfil = async (req: Request, res: Response): Promise<void> => {
 
     const profile = result.rows[0];
     const totalXp = profile.xp || 0;
-    
-    // Cálculo dinámico de Nivel y Porcentaje para la barra de progreso
     const nivelCalculado = Math.floor(totalXp / 500) + 1;
     const porcentajeBarra = `${Math.floor(((totalXp % 500) / 500) * 100)}%`;
 
@@ -100,6 +93,9 @@ export const getPerfil = async (req: Request, res: Response): Promise<void> => {
       ok: true,
       data: {
         ...profile,
+        user_id: profile.id,
+        xp_total: totalXp,
+        saldo_monedas: profile.monedas || 0,
         nivel: nivelCalculado,
         porcentaje_siguiente_nivel: porcentajeBarra
       }

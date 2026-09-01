@@ -14,8 +14,6 @@ import showerRoutes from './routes/showerRoutes';
 import ecoRoutes from './routes/ecoRoutes';
 import notificationRoutes from './routes/notificationRoutes';
 import rewardRoutes from './routes/rewardRoutes';
-import gamificationRoutes from './routes/gamificationRoutes';
-// NOTA: 'challengesRoutes' fue removido para erradicar endpoints redundantes.
 
 dotenv.config();
 
@@ -124,7 +122,6 @@ app.use('/onboarding', onboardingRoutes);   // Configuración inicial de usuario
 app.use('/reto', showerRoutes);           // Speedrun de ducha cronometrada
 app.use('/eco', ecoRoutes);               // Mini-juego Eco-Puzzle
 app.use('/rewards', rewardRoutes);         // Catálogo y canje de recompensas
-app.use('/gamification', gamificationRoutes); // Tablas de clasificación y niveles
 
 // Notificaciones y alertas
 app.use('/notifications', notificationRoutes);

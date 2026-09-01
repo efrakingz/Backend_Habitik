@@ -14,7 +14,7 @@ const router = Router();
 
 /**
  * @route   POST /eco/completar
- * @desc    Registra tiempo y errores del puzzle, guardando la columna 'usuario' en BD.
+ * @desc    Registra tiempo, errores y snapshot del usuario en BD.
  * @access  Protegido — Requiere Header 'Authorization: Bearer <token>'
  * @note    Usa authenticateToken (alias de verifyToken) para validar la sesión activa.
  */

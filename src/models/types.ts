@@ -42,6 +42,9 @@ export interface Profile {
   trivia_correct_count?: number;
   trivia_last_updated?: string;
   daily_bonus_claimed_at?: string;
+  onboarding_answers?: Record<string, unknown>;
+  ultima_actividad?: Date | null;
+  racha_dias?: number;
   created_at?: Date;
 }
 
@@ -57,8 +60,13 @@ export interface QrToken {
 export interface ShowerLog {
   id: string;
   user_id: string;
+  family_id?: string | null;
   duracion_segundos: number;
   estado: 'valido' | 'invalido';
+  metadata?: Record<string, unknown>;
+  xp_otorgada?: number;
+  monedas_otorgadas?: number;
+  es_valido?: boolean;
   created_at?: Date;
 }
 
