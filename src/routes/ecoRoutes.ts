@@ -1,23 +1,10 @@
 import { Router } from 'express';
-import { EcoController } from '../controllers/ecoController';
-import { authenticateToken } from '../middleware/auth';
-
-/**
- * ============================================================
- * RUTAS DEL ECO-PUZZLE TEMÁTICO — /eco
- * ============================================================
- * Procesa las partidas del mini-juego de rompecabezas,
- * persiste el intento en reto_validations y calcula la experiencia.
- */
+import { completarPuzzle } from '../controllers/ecoController';
+import { verifyToken } from '../middleware/auth';
 
 const router = Router();
 
-/**
- * @route   POST /eco/completar
- * @desc    Registra tiempo, errores y snapshot del usuario en BD.
- * @access  Protegido — Requiere Header 'Authorization: Bearer <token>'
- * @note    Usa authenticateToken (alias de verifyToken) para validar la sesión activa.
- */
-router.post('/completar', authenticateToken, EcoController.completarEcoPuzzle);
+// Ruta protegida con JWT para registrar término del Eco-Puzzle
+router.post('/completar', verifyToken, completarPuzzle);
 
 export default router;

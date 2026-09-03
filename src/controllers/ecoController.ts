@@ -1,40 +1,49 @@
 import { Request, Response } from 'express';
-import { EcoService } from '../services/ecoService';
+import { ChallengesService } from '../services/challengesService';
 
-export class EcoController {
-  static async completarEcoPuzzle(req: Request, res: Response) {
-    try {
-      const userId = req.auth?.user_id || req.body.user_id;
+/**
+ * Controller para registrar el término del Eco-Puzzle y otorgar XP/Monedas
+ */
+export const completarPuzzle = async (req: Request, res: Response): Promise<void> => {
+  try {
+    // 1. Extraer el userId del token JWT (inyectado en req.auth o req.user)
+    const userId = (req as any).auth?.user_id || (req as any).auth?.userId || (req as any).user?.id || req.body.user_id;
 
-      const { errores, tiempo_segundos } = req.body;
-
-      if (!userId || errores === undefined || tiempo_segundos === undefined) {
-        return res.status(400).json({ 
-          ok: false,
-          error: 'Faltan parámetros obligatorios en la petición (user_id, errores, tiempo_segundos)' 
-        });
-      }
-
-      const result = await EcoService.completarEcoPuzzle(
-        userId, 
-        Number(errores), 
-        Number(tiempo_segundos)
-      );
-
-      return res.status(200).json({
-        ok: true,
-        message: result.recompensas.valido 
-          ? 'Eco-Puzzle completado con éxito' 
-          : 'Partida finalizada sin recompensas. Superaste el límite de 3 errores o el tiempo máximo de 60 segundos.',
-        data: result
-      });
-
-    } catch (error: any) {
-      console.error('Error en EcoController.completarEcoPuzzle:', error);
-      return res.status(500).json({ 
-        ok: false,
-        error: error.message || 'Ocurrió un error interno al procesar el reto' 
-      });
+    if (!userId) {
+      res.status(401).json({ message: 'No autenticado o user_id faltante.' });
+      return;
     }
+
+    const { errores } = req.body;
+
+    // 2. Validar que la cantidad de errores sea válida
+    if (errores === undefined || errores === null || typeof errores !== 'number') {
+      res.status(400).json({ 
+        message: 'El campo "errores" es obligatorio y debe ser un número.' 
+      });
+      return;
+    }
+
+    // 3. Delegar la transacción SQL a ChallengesService
+    const resultado = await ChallengesService.completarPuzzle(userId, errores);
+
+    // 4. Retornar las recompensas otorgadas y el nuevo estado del perfil
+    res.status(200).json({
+      message: 'Eco-Puzzle completado exitosamente.',
+      recompensas: resultado
+    });
+  } catch (error: any) {
+    console.error('[ecoController.completarPuzzle]', error);
+
+    // Manejar el límite de errores configurado en las reglas de negocio (>3 errores)
+    if (error.message?.includes('límite de 3 errores')) {
+      res.status(400).json({ message: error.message });
+      return;
+    }
+
+    res.status(500).json({ 
+      message: 'Error interno al procesar el Eco-Puzzle.', 
+      error: error.message 
+    });
   }
-}
+};
