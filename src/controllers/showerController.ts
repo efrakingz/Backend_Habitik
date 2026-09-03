@@ -59,7 +59,8 @@ export const registerShower = async (req: Request, res: Response): Promise<void>
         total_xp: resultado.total_xp,
         saldo_monedas: resultado.saldo_monedas,
         nivel_actual: resultado.nivel_actual,
-        level_up: resultado.level_up
+        level_up: resultado.level_up,
+        racha_dias: resultado.racha_dias
       },
       guardado: true,
       valido: true

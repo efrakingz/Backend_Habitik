@@ -1,4 +1,5 @@
 import { pool } from '../config/db';
+import { StreakService } from './streakService';
 
 export class ChallengesService {
   /**
@@ -16,6 +17,7 @@ export class ChallengesService {
     saldo_monedas?: number;
     nivel_actual?: number;
     level_up?: boolean;
+    racha_dias?: number;
     mensaje?: string;
   }> {
     if (tiempoSegundos < 240) {
@@ -57,7 +59,7 @@ export class ChallengesService {
 
       const logInsertado = insertRes.rows[0];
 
-      const prof = await client.query(`SELECT xp, monedas, nivel FROM public.profiles WHERE id = $1;`, [userId]);
+      const prof = await client.query(`SELECT xp, monedas, nivel FROM public.profiles WHERE id = $1 FOR UPDATE;`, [userId]);
       if (prof.rows.length === 0) throw new Error('Perfil no encontrado.');
 
       const currentXp = prof.rows[0].xp || 0;
@@ -71,9 +73,11 @@ export class ChallengesService {
 
       await client.query(`
         UPDATE public.profiles
-        SET xp = $1, monedas = $2, nivel = $3, ultima_actividad = CURRENT_DATE
+        SET xp = $1, monedas = $2, nivel = $3
         WHERE id = $4;
       `, [totalXp, saldoMonedas, nuevoNivel, userId]);
+
+      const streak = await StreakService.actualizarRachaDiaria(client, userId);
 
       await client.query(`
         INSERT INTO public.historial_gamificacion (user_id, origen_actividad, monedas_otorgadas, xp_otorgada)
@@ -92,7 +96,8 @@ export class ChallengesService {
         total_xp: totalXp,
         saldo_monedas: saldoMonedas,
         nivel_actual: nuevoNivel,
-        level_up: levelUp
+        level_up: levelUp,
+        racha_dias: streak.racha_dias
       };
     } catch (error) {
       await client.query('ROLLBACK');
@@ -117,7 +122,7 @@ export class ChallengesService {
     try {
       await client.query('BEGIN');
 
-      const prof = await client.query(`SELECT xp, monedas, nivel FROM public.profiles WHERE id = $1;`, [userId]);
+      const prof = await client.query(`SELECT xp, monedas, nivel FROM public.profiles WHERE id = $1 FOR UPDATE;`, [userId]);
       if (prof.rows.length === 0) throw new Error('Perfil no encontrado.');
 
       const totalXp = (prof.rows[0].xp || 0) + xp;
@@ -129,9 +134,11 @@ export class ChallengesService {
 
       await client.query(`
         UPDATE public.profiles
-        SET xp = $1, monedas = $2, nivel = $3, ultima_actividad = CURRENT_DATE
+        SET xp = $1, monedas = $2, nivel = $3
         WHERE id = $4;
       `, [totalXp, saldoMonedas, nuevoNivel, userId]);
+
+      const streak = await StreakService.actualizarRachaDiaria(client, userId);
 
       await client.query(`
         INSERT INTO public.historial_gamificacion (user_id, origen_actividad, monedas_otorgadas, xp_otorgada)
@@ -147,11 +154,99 @@ export class ChallengesService {
         total_xp: totalXp,
         saldo_monedas: saldoMonedas,
         nivel_actual: nuevoNivel,
-        level_up: levelUp
+        level_up: levelUp,
+        racha_dias: streak.racha_dias
       };
     } catch (error) {
       await client.query('ROLLBACK');
       throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  static async evaluarConstanciaDiaria(userId: string) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      const resCount = await client.query(`
+        SELECT COUNT(DISTINCT origen_actividad) as total
+        FROM public.historial_gamificacion
+        WHERE user_id = $1
+          AND DATE(created_at) = CURRENT_DATE
+          AND origen_actividad IN ('speedrun_ducha', 'eco_puzzle');
+      `, [userId]);
+
+      const totalRetos = parseInt(resCount.rows[0].total || '0');
+
+      if (totalRetos < 2) {
+        await client.query('COMMIT');
+        return { activado: false, xp_bonus: 0, monedas_bonus: 0 };
+      }
+
+      const claim = await client.query(`
+        INSERT INTO public.daily_bonus_claims (user_id, bonus_date)
+        VALUES ($1, CURRENT_DATE)
+        ON CONFLICT (user_id, bonus_date) DO NOTHING
+        RETURNING id;
+      `, [userId]);
+
+      if (claim.rows.length === 0) {
+        await client.query('COMMIT');
+        return { activado: false, xp_bonus: 0, monedas_bonus: 0, ya_cobrado: true };
+      }
+
+      const prof = await client.query(`SELECT xp, monedas, nivel FROM public.profiles WHERE id = $1 FOR UPDATE;`, [userId]);
+      if (prof.rows.length === 0) throw new Error('Perfil no encontrado.');
+
+      const totalXp = (prof.rows[0].xp || 0) + 30;
+      const saldoMonedas = (prof.rows[0].monedas || 0) + 5;
+      const nuevoNivel = Math.floor(totalXp / 500) + 1;
+
+      await client.query(`
+        UPDATE public.profiles
+        SET xp = $1, monedas = $2, nivel = $3
+        WHERE id = $4;
+      `, [totalXp, saldoMonedas, nuevoNivel, userId]);
+
+      await client.query(`
+        INSERT INTO public.historial_gamificacion (user_id, origen_actividad, monedas_otorgadas, xp_otorgada)
+        VALUES ($1, 'bonus_constancia', 5, 30);
+      `, [userId]);
+
+      await client.query('COMMIT');
+      return { activado: true, xp_bonus: 30, monedas_bonus: 5, total_xp: totalXp, saldo_monedas: saldoMonedas };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  static async obtenerPerfilGamificado(userId: string) {
+    const client = await pool.connect();
+    try {
+      const res = await client.query(`
+        SELECT id, xp, monedas, nivel, racha_dias FROM public.profiles WHERE id = $1;
+      `, [userId]);
+
+      if (res.rows.length === 0) throw new Error('Perfil no encontrado.');
+
+      const p = res.rows[0];
+      const xpTotal = p.xp || 0;
+      const nivelActual = Math.floor(xpTotal / 500) + 1;
+      const porcentajeProgreso = Number(((xpTotal % 500) / 500 * 100).toFixed(2));
+
+      return {
+        user_id: p.id,
+        xp_total: xpTotal,
+        nivel: nivelActual,
+        porcentaje_siguiente_nivel: `${porcentajeProgreso}%`,
+        saldo_monedas: p.monedas || 0,
+        racha_dias: p.racha_dias || 0
+      };
     } finally {
       client.release();
     }
