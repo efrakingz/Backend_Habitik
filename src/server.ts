@@ -14,6 +14,8 @@ import showerRoutes from './routes/showerRoutes';
 import ecoRoutes from './routes/ecoRoutes';
 import notificationRoutes from './routes/notificationRoutes';
 import rewardRoutes from './routes/rewardRoutes';
+import { getPerfil } from './controllers/authController';
+import { verifyToken } from './middleware/auth';
 
 dotenv.config();
 
@@ -116,7 +118,8 @@ if (process.env.DATABASE_URL) {
 }
 
 // ── Mapeo de Rutas (Prefijo Único por Dominio) ────────────────────────
-app.use('/auth', authRoutes);             // Autenticación y consulta de perfil
+app.use('/auth', authRoutes);             // Autenticación y consulta de perfil (/auth/perfil/:user_id)
+app.get('/perfil/:user_id', verifyToken, getPerfil); // Alias para clientes que consultan /perfil/:user_id directamente
 app.use('/familia', familyRoutes);         // Gestión de grupo familiar
 app.use('/onboarding', onboardingRoutes);   // Configuración inicial de usuario
 app.use('/reto', showerRoutes);           // Speedrun de ducha cronometrada

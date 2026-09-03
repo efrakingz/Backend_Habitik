@@ -96,7 +96,7 @@ export const getPerfil = async (req: Request, res: Response): Promise<void> => {
         user_id: profile.id,
         xp_total: totalXp,
         saldo_monedas: profile.monedas || 0,
-        nivel: nivelCalculado,
+        nivel: profile.nivel ?? nivelCalculado,
         porcentaje_siguiente_nivel: porcentajeBarra
       }
     });
