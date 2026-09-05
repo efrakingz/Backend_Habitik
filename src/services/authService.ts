@@ -3,6 +3,7 @@ import jwt from 'jsonwebtoken';
 import { pool } from '../config/db';
 import { UserRepository } from '../repositories/userRepository';
 import { FamilyRepository } from '../repositories/familyRepository';
+import { StreakService } from './streakService';
 import { Profile } from '../models/types';
 
 const userRepository = new UserRepository();
@@ -95,6 +96,9 @@ export class AuthService {
     if (!isMatch) {
       throw new Error('INVALID_CREDENTIALS');
     }
+
+    // Limpieza de racha rota: Si no completó actividad ayer ni hoy, se resetea a 0
+    await StreakService.verificarYResetearRacha(user.id);
 
     const profile = await userRepository.getProfileById(user.id);
     if (!profile) {

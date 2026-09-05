@@ -1,7 +1,32 @@
 import { Request, Response } from 'express';
 import { FamilyService } from '../services/familyService';
+import { pool } from '../config/db';
 
 const familyService = new FamilyService();
+
+/**
+ * Resuelve el family_id del usuario de forma robusta:
+ * 1. Desde req.auth.family_id (payload del token JWT)
+ * 2. Si viene por query param (?family_id=...) o header (x-family-id)
+ * 3. Si no viene en el token (ej: emitido antes del onboarding o de unirse),
+ *    se consulta directamente a public.profiles por req.auth.user_id en la BD.
+ */
+async function resolveFamilyId(req: Request): Promise<string | null> {
+  if (req.auth?.family_id) return req.auth.family_id;
+  if (req.query.family_id && typeof req.query.family_id === 'string' && req.query.family_id.trim().length > 0) {
+    return req.query.family_id.trim();
+  }
+  if (req.headers['x-family-id'] && typeof req.headers['x-family-id'] === 'string' && req.headers['x-family-id'].trim().length > 0) {
+    return req.headers['x-family-id'].trim();
+  }
+  if (req.auth?.user_id) {
+    const prof = await pool.query('SELECT family_id FROM public.profiles WHERE id = $1', [req.auth.user_id]);
+    if (prof.rows.length > 0 && prof.rows[0].family_id) {
+      return prof.rows[0].family_id;
+    }
+  }
+  return null;
+}
 
 /**
  * ============================================================
@@ -54,8 +79,7 @@ const familyService = new FamilyService();
  *   500 — Error interno
  */
 export const getInviteToken = async (req: Request, res: Response): Promise<void> => {
-  // family_id viene del payload del JWT decodificado
-  const familyId = req.auth?.family_id;
+  const familyId = await resolveFamilyId(req);
 
   if (!familyId) {
     res.status(400).json({
@@ -69,7 +93,7 @@ export const getInviteToken = async (req: Request, res: Response): Promise<void>
     const qrToken = await familyService.generateInviteToken(familyId);
     res.status(201).json({
       message: 'Token de invitación generado. Válido por 10 minutos.',
-      invite_token: qrToken.token,   // ← Este UUID es el que va en el QR
+      invite_token: qrToken.token,
       expires_at: qrToken.expires_at,
       family_id: qrToken.family_id
     });
@@ -82,101 +106,62 @@ export const getInviteToken = async (req: Request, res: Response): Promise<void>
 /**
  * POST /familia/join
  *
- * ✅ Une al usuario autenticado al hogar representado por el invite_token.
- *    El usuario recibirá el rol 'Miembro'.
- *    El token QR queda marcado como "usado" y ya no puede reutilizarse.
+ * ✅ Permite a un usuario autenticado unirse a un hogar existente mediante un token QR.
  *
- * 🔐 REQUIERE: JWT válido (cualquier usuario autenticado)
+ * 🔐 REQUIERE: JWT válido (cualquier usuario registrado)
  *
- * 📥 BODY ESPERADO (JSON):
+ * 📥 BODY:
  * {
- *   "invite_token": "550e8400-e29b-41d4-a716-446655440000", // UUID del QR escaneado
- *   "user_id":      "uuid-del-usuario-que-se-une"           // ID del usuario que se une
+ *   "invite_token": "550e8400-e29b-41d4-a716-446655440000"
  * }
- *
- * 📤 RESPUESTA EXITOSA 200:
- * {
- *   "message": "Te has unido al hogar familiar exitosamente.",
- *   "family": {
- *     "id":          "uuid-del-hogar",
- *     "nombre":      "Familia López",
- *     "family_code": "AB12CD",
- *     ...
- *   },
- *   "role": "Miembro"
- * }
- *
- * ❌ ERRORES:
- *   400 — Faltan invite_token o user_id
- *   401 — Token JWT inválido/expirado
- *   410 — Token de invitación expirado (pasaron >10 min) o ya fue usado
- *   500 — Error interno
- *
- * 💡 NOTA: El 410 Gone es intencional según CA-1.2-3.
- *    Si recibes 410, el Jefe debe generar un nuevo token QR.
  */
 export const joinFamily = async (req: Request, res: Response): Promise<void> => {
-  const { invite_token, user_id } = req.body;
+  const userId = req.auth?.user_id;
 
-  if (!invite_token || !user_id) {
-    res.status(400).json({ message: 'invite_token y user_id son requeridos.' });
+  if (!userId) {
+    res.status(401).json({ message: 'No autenticado. Token JWT requerido.' });
+    return;
+  }
+
+  const { invite_token } = req.body;
+
+  if (!invite_token || typeof invite_token !== 'string' || invite_token.trim().length === 0) {
+    res.status(400).json({
+      message: 'El campo invite_token es requerido.',
+      hint: 'Escanea el código QR para obtener el token de invitación.'
+    });
     return;
   }
 
   try {
-    const family = await familyService.joinFamily(invite_token, user_id);
-    res.json({
-      message: 'Te has unido al hogar familiar exitosamente.',
-      family,
-      role: 'Miembro' // El rol asignado al unirse por invitación
+    const family = await familyService.joinFamily(invite_token.trim(), userId);
+    res.status(200).json({
+      message: `¡Te has unido exitosamente al hogar "${family?.nombre || 'Familia'}"!`,
+      family
     });
   } catch (error) {
     if (error instanceof Error && error.message === 'TOKEN_EXPIRED_OR_USED') {
-      // CA-1.2-3: Token expirado o ya usado → 410 Gone
       res.status(410).json({
         message: 'El token de invitación ha expirado o ya fue utilizado.',
-        hint: 'Pide al Jefe de Familia que genere un nuevo código QR en GET /familia/invite'
+        hint: 'Pídele al Jefe de Familia que genere un nuevo código QR.'
       });
       return;
     }
+
     console.error('[familyController.joinFamily]', error);
-    res.status(500).json({ message: 'Error interno al unirse al grupo familiar.' });
+    res.status(500).json({ message: 'Error interno al unirse a la familia.' });
   }
 };
 
 /**
  * PATCH /familia/nombre
  *
- * ✅ Actualiza el nombre del hogar familiar.
- *    ⚠️  BLOQUEADO durante los primeros 60 días desde la creación del hogar (CA-1.1-2).
+ * ✅ Permite al Jefe de Familia actualizar el nombre de su hogar.
  *
- * 🔐 REQUIERE: JWT válido + rol 'admin' (solo Jefe de Familia)
- *
- * 📥 BODY ESPERADO (JSON):
- * {
- *   "nombre": "Nuevo Nombre del Hogar"
- * }
- *
- * 📤 RESPUESTA EXITOSA 200:
- * {
- *   "message": "Nombre del hogar actualizado exitosamente.",
- *   "family": {
- *     "id":     "uuid-del-hogar",
- *     "nombre": "Nuevo Nombre del Hogar",
- *     ...
- *   }
- * }
- *
- * ❌ ERRORES:
- *   400 — Nombre vacío o no proporcionado
- *   401 — Token JWT inválido/expirado
- *   403 — No es Jefe de Familia O el hogar tiene menos de 60 días
- *   404 — El hogar no existe en la BD
- *   500 — Error interno
+ * 🔐 REQUIERE: JWT válido + rol 'admin' (solo Jefes)
  */
 export const updateFamilyName = async (req: Request, res: Response): Promise<void> => {
-  // El family_id viene del payload del JWT (no hace falta enviarlo en el body)
-  const familyId = req.auth?.family_id;
+  const familyId = await resolveFamilyId(req);
   const { nombre } = req.body;
 
   if (!familyId) {
@@ -197,14 +182,14 @@ export const updateFamilyName = async (req: Request, res: Response): Promise<voi
     });
   } catch (error) {
     if (error instanceof Error && error.message === 'FAMILY_NAME_LOCKED') {
-      // El hogar tiene menos de 60 días desde su creación
       res.status(403).json({
-        message: 'El nombre del hogar no puede modificarse durante los primeros 60 días desde su creación.'
+        message: 'No puedes cambiar el nombre del hogar aún. Debe pasar al menos 60 días desde su creación.',
+        dias_requeridos: 60
       });
       return;
     }
     if (error instanceof Error && error.message === 'FAMILY_NOT_FOUND') {
-      res.status(404).json({ message: 'Hogar familiar no encontrado.' });
+      res.status(404).json({ message: 'El hogar familiar no existe.' });
       return;
     }
     console.error('[familyController.updateFamilyName]', error);
@@ -215,34 +200,12 @@ export const updateFamilyName = async (req: Request, res: Response): Promise<voi
 /**
  * GET /familia/miembros
  *
- * ✅ Obtiene la lista de perfiles de todos los miembros del hogar familiar.
+ * ✅ Obtiene la lista de perfiles de todos los miembros del hogar familiar (Ranking por XP).
  *
  * 🔐 REQUIERE: JWT válido (cualquier miembro de la familia autenticado)
- *
- * 📥 BODY: No requiere body.
- *
- * 📤 RESPUESTA EXITOSA 200:
- * [
- *   {
- *     "id": "uuid-del-miembro",
- *     "email": "miembro@habitik.cl",
- *     "nombre": "Pedro",
- *     "rol": "Miembro",
- *     "xp": 120,
- *     "nivel": 2,
- *     "monedas": 50,
- *     "created_at": "2025-01-15T14:30:00.000Z"
- *   },
- *   ...
- * ]
- *
- * ❌ ERRORES:
- *   400 — El usuario no pertenece a ningún hogar
- *   401 — Token JWT inválido/expirado
- *   500 — Error interno
  */
 export const getFamilyMembers = async (req: Request, res: Response): Promise<void> => {
-  const familyId = req.auth?.family_id;
+  const familyId = await resolveFamilyId(req);
 
   if (!familyId) {
     res.status(400).json({

@@ -1,9 +1,10 @@
 import { Request, Response } from 'express';
 import { ChallengesService } from '../services/challengesService';
+import { StreakService } from '../services/streakService';
 
 /**
  * ============================================================
- * CONTROLADOR DE DUCHA (RETO) — /reto
+ * CONTROLADOR DE DUCHA Y RACHAS (RETO) — /reto
  * ============================================================
  */
 export const registerShower = async (req: Request, res: Response): Promise<void> => {
@@ -39,7 +40,7 @@ export const registerShower = async (req: Request, res: Response): Promise<void>
 
     if (!resultado.guardado) {
       res.status(400).json({
-        message: 'Acción rechazada: La duración mínima para activar y registrar el reto es de 4 minutos (240 segundos).',
+        message: 'Acción rechazada: La duración mínima para activar y registrar el reto es de 3 minutos (180 segundos).',
         guardado: false,
         valido: false,
         razon: resultado.mensaje
@@ -70,3 +71,28 @@ export const registerShower = async (req: Request, res: Response): Promise<void>
     res.status(500).json({ message: 'Error interno al registrar la ducha.' });
   }
 };
+
+/**
+ * Consulta la racha semanal del usuario mediante el procedimiento almacenado
+ * en PostgreSQL public.calcular_racha_semanal.
+ */
+export const getRachaSemanal = async (req: Request, res: Response): Promise<void> => {
+  const userId = req.auth?.user_id || req.params.user_id || req.query.user_id;
+
+  if (!userId || typeof userId !== 'string') {
+    res.status(400).json({ message: 'El parámetro user_id es obligatorio.' });
+    return;
+  }
+
+  try {
+    const racha = await StreakService.obtenerRachaSemanal(userId);
+    res.status(200).json({
+      ok: true,
+      data: racha
+    });
+  } catch (error) {
+    console.error('[showerController.getRachaSemanal]', error);
+    res.status(500).json({ message: 'Error al calcular la racha semanal.' });
+  }
+};
+

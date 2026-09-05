@@ -50,8 +50,18 @@ export class FamilyRepository {
   }
 
   async getFamilyMembers(familyId: string): Promise<any[]> {
+    // 1. Resetear rachas rotas de los miembros de la familia que no tuvieron actividad ayer ni hoy
+    await query(`
+      UPDATE public.profiles
+      SET racha_dias = 0
+      WHERE family_id = $1
+        AND (ultima_actividad IS NULL OR ultima_actividad < CURRENT_DATE - 1)
+        AND racha_dias > 0;
+    `, [familyId]);
+
+    // 2. Obtener miembros con racha_dias actualizada
     const res = await query(
-      `SELECT id, email, nombre, avatar, rol, xp, nivel, monedas, created_at
+      `SELECT id, email, nombre, avatar, rol, xp, nivel, monedas, racha_dias, ultima_actividad, created_at
        FROM public.profiles 
        WHERE family_id = $1 
        ORDER BY xp DESC, nombre ASC`,

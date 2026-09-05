@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { AuthService } from '../services/authService';
+import { StreakService } from '../services/streakService';
 import { pool } from '../config/db';
 
 const authService = new AuthService();
@@ -72,10 +73,16 @@ export const getPerfil = async (req: Request, res: Response): Promise<void> => {
   }
 
   try {
+    // 1. Limpieza de racha rota: Si no completó actividad ayer ni hoy, la racha se resetea a 0
+    await StreakService.verificarYResetearRacha(user_id);
+
     const queryText = `
-      SELECT id, email, nombre, rol, family_id, xp, monedas, nivel, racha_dias
-      FROM public.profiles 
-      WHERE id = $1;
+      SELECT 
+        p.id, p.email, p.nombre, p.rol, p.family_id, p.xp, p.monedas, p.nivel, p.racha_dias, p.avatar, p.ultima_actividad,
+        f.nombre as family_name
+      FROM public.profiles p
+      LEFT JOIN public.families f ON f.id = p.family_id
+      WHERE p.id = $1;
     `;
     const result = await pool.query(queryText, [user_id]);
 

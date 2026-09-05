@@ -5,7 +5,12 @@ import { LogrosService } from './logrosService';
 export class ChallengesService {
   /**
    * HU 2.1: Finalizar Speedrun de la Ducha
-   * Regla de negocio: Si la duración es menor a 4 minutos (240s), NO se guarda nada en BD.
+   * Regla de negocio:
+   * - Menor a 3 minutos (180s): No se registra en BD (filtro anti-trampa).
+   * - De 3 a 5 min (180s - 300s): 200 XP, 2 monedas (tiempo óptimo ecológico).
+   * - De 5 a 8 min (301s - 480s): 100 XP, 1 moneda.
+   * - De 8 a 30 min (481s - 1800s): 50 XP, 0 monedas.
+   * - Mayor a 30 min (>1800s): 0 XP, 0 monedas (ducha excesiva registrada).
    */
   static async finalizarDucha(userId: string, familyId: string | null, tiempoSegundos: number): Promise<{
     log?: any;
@@ -21,19 +26,21 @@ export class ChallengesService {
     racha_dias?: number;
     mensaje?: string;
   }> {
-    if (tiempoSegundos < 240) {
+    if (tiempoSegundos < 180) {
       return {
         es_valido: false,
         guardado: false,
         tiempo_segundos: tiempoSegundos,
         xp_ganada: 0,
         monedas_ganadas: 0,
-        mensaje: 'La ducha fue menor a 4 minutos. No se registró nada en la base de datos.'
+        mensaje: 'La ducha fue menor a 3 minutos (180s). No se registró nada en la base de datos.'
       };
     }
 
     let xp = 0;
     let monedas = 0;
+    let estado = 'valido';
+    let esValido = true;
 
     if (tiempoSegundos <= 300) {
       xp = 200;
@@ -41,9 +48,15 @@ export class ChallengesService {
     } else if (tiempoSegundos <= 480) {
       xp = 100;
       monedas = 1;
-    } else {
+    } else if (tiempoSegundos <= 1800) {
       xp = 50;
       monedas = 0;
+    } else {
+      // Ducha de más de 30 minutos: 0 XP
+      xp = 0;
+      monedas = 0;
+      estado = 'excesivo';
+      esValido = false;
     }
 
     const client = await pool.connect();
@@ -54,9 +67,9 @@ export class ChallengesService {
         INSERT INTO public.shower_logs (
           user_id, family_id, duracion_segundos, estado, es_valido, xp_otorgada, monedas_otorgadas
         )
-        VALUES ($1, $2, $3, 'valido', true, $4, $5)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
         RETURNING *;
-      `, [userId, familyId, tiempoSegundos, xp, monedas]);
+      `, [userId, familyId, tiempoSegundos, estado, esValido, xp, monedas]);
 
       const logInsertado = insertRes.rows[0];
 
@@ -266,6 +279,8 @@ export class ChallengesService {
   static async obtenerPerfilGamificado(userId: string) {
     const client = await pool.connect();
     try {
+      await StreakService.verificarYResetearRacha(userId, client);
+
       const res = await client.query(`
         SELECT id, xp, monedas, racha_dias FROM public.profiles WHERE id = $1;
       `, [userId]);
