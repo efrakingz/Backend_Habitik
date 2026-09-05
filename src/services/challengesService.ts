@@ -1,5 +1,6 @@
 import { pool } from '../config/db';
 import { StreakService } from './streakService';
+import { LogrosService } from './logrosService';
 
 export class ChallengesService {
   /**
@@ -68,7 +69,9 @@ export class ChallengesService {
       const totalXp = currentXp + xp;
       const saldoMonedas = (prof.rows[0].monedas || 0) + monedas;
 
-      const nuevoNivel = Math.floor(totalXp / 500) + 1;
+      // Cálculo del nuevo nivel comparando la nueva XP contra la tabla aislada de niveles
+      const nivelRes = await client.query(`SELECT public.obtener_nivel_usuario($1) AS nuevo_nivel;`, [userId]);
+      const nuevoNivel = nivelRes.rows[0]?.nuevo_nivel || Math.floor(totalXp / 500) + 1;
       const levelUp = nuevoNivel > currentNivel;
 
       await client.query(`
@@ -83,6 +86,9 @@ export class ChallengesService {
         INSERT INTO public.historial_gamificacion (user_id, origen_actividad, monedas_otorgadas, xp_otorgada)
         VALUES ($1, 'speedrun_ducha', $2, $3);
       `, [userId, monedas, xp]);
+
+      // 🏆 DISPARADOR DE LOGROS: Otorga automáticamente el logro correcto 'PRIMERA_DUCHA'
+      await LogrosService.otorgarLogroSiAplica(userId, 'PRIMERA_DUCHA', client);
 
       await client.query('COMMIT');
 
@@ -129,7 +135,9 @@ export class ChallengesService {
       const saldoMonedas = (prof.rows[0].monedas || 0) + monedas;
       const currentNivel = prof.rows[0].nivel || 1;
 
-      const nuevoNivel = Math.floor(totalXp / 500) + 1;
+      // Cálculo del nuevo nivel comparando la nueva XP contra la tabla aislada de niveles
+      const nivelRes = await client.query(`SELECT public.obtener_nivel_usuario($1) AS nuevo_nivel;`, [userId]);
+      const nuevoNivel = nivelRes.rows[0]?.nuevo_nivel || Math.floor(totalXp / 500) + 1;
       const levelUp = nuevoNivel > currentNivel;
 
       await client.query(`
@@ -144,6 +152,11 @@ export class ChallengesService {
         INSERT INTO public.historial_gamificacion (user_id, origen_actividad, monedas_otorgadas, xp_otorgada)
         VALUES ($1, 'eco_puzzle', $2, $3);
       `, [userId, monedas, xp]);
+
+      // 🏆 DISPARADOR DE LOGROS: Otorga 'MAESTRO_ECO' si completó el puzzle sin errores
+      if (errores === 0) {
+        await LogrosService.otorgarLogroSiAplica(userId, 'MAESTRO_ECO', client);
+      }
 
       await client.query('COMMIT');
 
@@ -202,7 +215,9 @@ export class ChallengesService {
 
       const totalXp = (prof.rows[0].xp || 0) + 30;
       const saldoMonedas = (prof.rows[0].monedas || 0) + 5;
-      const nuevoNivel = Math.floor(totalXp / 500) + 1;
+
+      const nivelRes = await client.query(`SELECT public.obtener_nivel_usuario($1) AS nuevo_nivel;`, [userId]);
+      const nuevoNivel = nivelRes.rows[0]?.nuevo_nivel || Math.floor(totalXp / 500) + 1;
 
       await client.query(`
         UPDATE public.profiles
@@ -229,14 +244,18 @@ export class ChallengesService {
     const client = await pool.connect();
     try {
       const res = await client.query(`
-        SELECT id, xp, monedas, nivel, racha_dias FROM public.profiles WHERE id = $1;
+        SELECT id, xp, monedas, racha_dias FROM public.profiles WHERE id = $1;
       `, [userId]);
 
       if (res.rows.length === 0) throw new Error('Perfil no encontrado.');
 
       const p = res.rows[0];
       const xpTotal = p.xp || 0;
-      const nivelActual = Math.floor(xpTotal / 500) + 1;
+
+      // Obtener nivel dinámicamente desde la tabla aislada de niveles
+      const nivelRes = await client.query(`SELECT public.obtener_nivel_usuario($1) AS nivel;`, [userId]);
+      const nivelActual = nivelRes.rows[0]?.nivel || 1;
+
       const porcentajeProgreso = Number(((xpTotal % 500) / 500 * 100).toFixed(2));
 
       return {

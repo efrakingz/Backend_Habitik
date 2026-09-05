@@ -16,6 +16,7 @@ import notificationRoutes from './routes/notificationRoutes';
 import rewardRoutes from './routes/rewardRoutes';
 import { getPerfil } from './controllers/authController';
 import { verifyToken } from './middleware/auth';
+import logrosRoutes from './routes/logrosRoutes';
 
 dotenv.config();
 
@@ -125,6 +126,7 @@ app.use('/onboarding', onboardingRoutes);   // Configuración inicial de usuario
 app.use('/reto', showerRoutes);           // Speedrun de ducha cronometrada
 app.use('/eco', ecoRoutes);               // Mini-juego Eco-Puzzle
 app.use('/rewards', rewardRoutes);         // Catálogo y canje de recompensas
+app.use('/logros', logrosRoutes);
 
 // Notificaciones y alertas
 app.use('/notifications', notificationRoutes);
