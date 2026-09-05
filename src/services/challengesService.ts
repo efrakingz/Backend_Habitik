@@ -69,16 +69,24 @@ export class ChallengesService {
       const totalXp = currentXp + xp;
       const saldoMonedas = (prof.rows[0].monedas || 0) + monedas;
 
-      // Cálculo del nuevo nivel comparando la nueva XP contra la tabla aislada de niveles
-      const nivelRes = await client.query(`SELECT public.obtener_nivel_usuario($1) AS nuevo_nivel;`, [userId]);
-      const nuevoNivel = nivelRes.rows[0]?.nuevo_nivel || Math.floor(totalXp / 500) + 1;
-      const levelUp = nuevoNivel > currentNivel;
-
+      // 1. PRIMERO actualizamos la XP y Monedas acumuladas en la tabla profiles
       await client.query(`
         UPDATE public.profiles
-        SET xp = $1, monedas = $2, nivel = $3
-        WHERE id = $4;
-      `, [totalXp, saldoMonedas, nuevoNivel, userId]);
+        SET xp = $1, monedas = $2
+        WHERE id = $3;
+      `, [totalXp, saldoMonedas, userId]);
+
+      // 2. DESPUÉS consultamos el nuevo nivel para que la función SQL lea la XP ya actualizada
+      const nivelRes = await client.query(`SELECT public.obtener_nivel_usuario($1) AS nuevo_nivel;`, [userId]);
+      const nuevoNivel = nivelRes.rows[0]?.nuevo_nivel || Math.min(99, Math.floor(totalXp / 500) + 1);
+      const levelUp = nuevoNivel > currentNivel;
+
+      // 3. Guardamos el nivel resultante en la columna de soporte
+      await client.query(`
+        UPDATE public.profiles
+        SET nivel = $1
+        WHERE id = $2;
+      `, [nuevoNivel, userId]);
 
       const streak = await StreakService.actualizarRachaDiaria(client, userId);
 
@@ -135,16 +143,24 @@ export class ChallengesService {
       const saldoMonedas = (prof.rows[0].monedas || 0) + monedas;
       const currentNivel = prof.rows[0].nivel || 1;
 
-      // Cálculo del nuevo nivel comparando la nueva XP contra la tabla aislada de niveles
-      const nivelRes = await client.query(`SELECT public.obtener_nivel_usuario($1) AS nuevo_nivel;`, [userId]);
-      const nuevoNivel = nivelRes.rows[0]?.nuevo_nivel || Math.floor(totalXp / 500) + 1;
-      const levelUp = nuevoNivel > currentNivel;
-
+      // 1. Actualizamos la XP acumulada
       await client.query(`
         UPDATE public.profiles
-        SET xp = $1, monedas = $2, nivel = $3
-        WHERE id = $4;
-      `, [totalXp, saldoMonedas, nuevoNivel, userId]);
+        SET xp = $1, monedas = $2
+        WHERE id = $3;
+      `, [totalXp, saldoMonedas, userId]);
+
+      // 2. Obtenemos el nivel recalculado
+      const nivelRes = await client.query(`SELECT public.obtener_nivel_usuario($1) AS nuevo_nivel;`, [userId]);
+      const nuevoNivel = nivelRes.rows[0]?.nuevo_nivel || Math.min(99, Math.floor(totalXp / 500) + 1);
+      const levelUp = nuevoNivel > currentNivel;
+
+      // 3. Guardamos el nivel resultante
+      await client.query(`
+        UPDATE public.profiles
+        SET nivel = $1
+        WHERE id = $2;
+      `, [nuevoNivel, userId]);
 
       const streak = await StreakService.actualizarRachaDiaria(client, userId);
 
@@ -216,14 +232,21 @@ export class ChallengesService {
       const totalXp = (prof.rows[0].xp || 0) + 30;
       const saldoMonedas = (prof.rows[0].monedas || 0) + 5;
 
+      // Actualizamos XP primero
+      await client.query(`
+        UPDATE public.profiles
+        SET xp = $1, monedas = $2
+        WHERE id = $3;
+      `, [totalXp, saldoMonedas, userId]);
+
       const nivelRes = await client.query(`SELECT public.obtener_nivel_usuario($1) AS nuevo_nivel;`, [userId]);
-      const nuevoNivel = nivelRes.rows[0]?.nuevo_nivel || Math.floor(totalXp / 500) + 1;
+      const nuevoNivel = nivelRes.rows[0]?.nuevo_nivel || Math.min(99, Math.floor(totalXp / 500) + 1);
 
       await client.query(`
         UPDATE public.profiles
-        SET xp = $1, monedas = $2, nivel = $3
-        WHERE id = $4;
-      `, [totalXp, saldoMonedas, nuevoNivel, userId]);
+        SET nivel = $1
+        WHERE id = $2;
+      `, [nuevoNivel, userId]);
 
       await client.query(`
         INSERT INTO public.historial_gamificacion (user_id, origen_actividad, monedas_otorgadas, xp_otorgada)
@@ -231,7 +254,7 @@ export class ChallengesService {
       `, [userId]);
 
       await client.query('COMMIT');
-      return { activado: true, xp_bonus: 30, monedas_bonus: 5, total_xp: totalXp, saldo_monedas: saldoMonedas };
+      return { activado: true, xp_bonus: 30, monedas_bonus: 5, total_xp: totalXp, saldo_monedas: saldoMonedas, nivel_actual: nuevoNivel };
     } catch (error) {
       await client.query('ROLLBACK');
       throw error;
@@ -252,9 +275,9 @@ export class ChallengesService {
       const p = res.rows[0];
       const xpTotal = p.xp || 0;
 
-      // Obtener nivel dinámicamente desde la tabla aislada de niveles
+      // Obtener nivel dinámicamente desde la función SQL algorítmica
       const nivelRes = await client.query(`SELECT public.obtener_nivel_usuario($1) AS nivel;`, [userId]);
-      const nivelActual = nivelRes.rows[0]?.nivel || 1;
+      const nivelActual = nivelRes.rows[0]?.nivel || Math.min(99, Math.floor(xpTotal / 500) + 1);
 
       const porcentajeProgreso = Number(((xpTotal % 500) / 500 * 100).toFixed(2));
 

@@ -136,13 +136,24 @@ export class LogrosService {
   }
 
   /**
-   * Consulta el nivel calculado desde la tabla aislada 'niveles'
+   * Consulta el nivel calculado algorítmicamente desde PostgreSQL 
+   * o calcula la equivalencia con la fórmula Floor(XP / 500) + 1
    */
   static async obtenerNivelCalculado(userId: string) {
     const res = await pool.query(
-      `SELECT public.obtener_nivel_usuario($1) AS nivel_actual;`,
+      `SELECT public.obtener_nivel_usuario($1) AS nivel_actual, p.xp 
+       FROM public.profiles p 
+       WHERE p.id = $1;`,
       [userId]
     );
-    return res.rows[0]?.nivel_actual || 1;
+
+    if (res.rows.length === 0) return 1;
+
+    // Retorna el nivel devuelto por SQL o aplica el algoritmo de respaldo (Capped a nivel 99)
+    const nivelSql = res.rows[0]?.nivel_actual;
+    const xpUser = res.rows[0]?.xp || 0;
+    const nivelAlgoritmico = Math.min(99, Math.floor(xpUser / 500) + 1);
+
+    return nivelSql || nivelAlgoritmico;
   }
 }
