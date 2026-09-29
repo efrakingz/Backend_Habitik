@@ -1,24 +1,32 @@
 import { Router } from 'express';
-import { registerShower, getRachaSemanal } from '../controllers/showerController';
+import { iniciarDucha, finalizarDucha, getRachaSemanal } from '../controllers/showerController';
 import { verifyToken } from '../middleware/auth';
 
 /**
  * ============================================================
  * RUTAS DEL SPEEDRUN DE DUCHA Y RACHAS — /reto
  * ============================================================
- * Procesa el registro de tiempo en el cronómetro de ducha,
- * aplica el filtro anti-trampa, asigna recompensas y consulta rachas.
+ * Procesa el inicio y finalización del cronómetro de ducha medido
+ * de forma autoritaria en el backend, aplica filtros anti-trampa,
+ * asigna recompensas y consulta rachas.
  */
 
 const router = Router();
 
 /**
- * @route   POST /reto/ducha
- * @desc    Valida la duración de la ducha (>180s), otorga XP/monedas y actualiza profiles.
+ * @route   POST /reto/ducha/iniciar
+ * @desc    Registra la marca de tiempo inicial (NOW()) en el servidor al aceptar el reto.
  * @access  Protegido — Requiere Header 'Authorization: Bearer <token>'
- * @note    Extrae user_id automáticamente del payload JWT inyectado en req.auth.
  */
-router.post('/ducha', verifyToken, registerShower);
+router.post('/ducha/iniciar', verifyToken, iniciarDucha);
+
+/**
+ * @route   POST /reto/ducha/finalizar
+ * @desc    Calcula el tiempo real transcurrido en el servidor, valida la duración (>=180s), 
+ *          otorga XP/monedas y actualiza profiles.
+ * @access  Protegido — Requiere Header 'Authorization: Bearer <token>'
+ */
+router.post('/ducha/finalizar', verifyToken, finalizarDucha);
 
 /**
  * @route   GET /reto/racha-semanal
@@ -34,4 +42,4 @@ router.get('/racha-semanal', verifyToken, getRachaSemanal);
  */
 router.get('/racha-semanal/:user_id', getRachaSemanal);
 
-export default router;
+export default router;
