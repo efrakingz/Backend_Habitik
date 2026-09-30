@@ -1,159 +1,176 @@
 import { pool } from '../config/db';
 
 export class RewardService {
+  
   /**
-   * Crear recompensa (Exclusivo para el Jefe de Hogar).
+   * 1. Listar todas las recompensas de la familia
    */
-  static async crearRecompensaFamiliar(
-    jefeId: string, 
-    titulo: string, 
-    descripcion: string, 
-    costoMonedas: number, 
-    esFamiliar: boolean
-  ) {
+  async getRewardsByFamily(familyId: string) {
     const client = await pool.connect();
     try {
-      const profileRes = await client.query(
-        'SELECT family_id, rol FROM public.profiles WHERE id = $1', 
-        [jefeId]
-      );
-      const profile = profileRes.rows[0];
-
-      if (!profile) {
-        throw new Error('Perfil del usuario no encontrado.');
-      }
-
-      // Normaliza el rol a minúsculas para evitar fallos por "Jefe" vs "jefe"
-      const userRol = profile.rol ? profile.rol.toString().toLowerCase().trim() : '';
-
-      if (userRol !== 'jefe') {
-        throw new Error('Solo el Jefe de Hogar tiene permisos para crear recompensas.');
-      }
-
-      const insertRes = await client.query(`
-        INSERT INTO public.family_rewards (family_id, titulo, descripcion, costo, es_familiar, creador_id)
-        VALUES ($1, $2, $3, $4, $5, $6)
-        RETURNING *;
-      `, [profile.family_id, titulo, descripcion, costoMonedas, esFamiliar, jefeId]);
-
-      return insertRes.rows[0];
-    } finally {
-      client.release();
-    }
-  }
-
-  /**
-   * Listar recompensas disponibles para la familia.
-   */
-  static async listarRecompensasFamiliares(userId: string) {
-    const client = await pool.connect();
-    try {
-      const profileRes = await client.query('SELECT family_id FROM public.profiles WHERE id = $1', [userId]);
-      const familyId = profileRes.rows[0]?.family_id;
-
-      if (!familyId) throw new Error('El usuario no pertenece a ninguna familia.');
-
-      const rewardsRes = await client.query(`
-        SELECT * FROM public.family_rewards
-        WHERE family_id = $1 AND disponible = TRUE
+      const result = await client.query(`
+        SELECT id, titulo, descripcion, emoji, costo, disponible, es_familiar, created_at, last_redeemed_at, metadata
+        FROM public.family_rewards
+        WHERE family_id = $1
         ORDER BY created_at DESC;
       `, [familyId]);
-
-      return rewardsRes.rows;
+      return result.rows;
     } finally {
       client.release();
     }
   }
 
   /**
-   * Canjear Recompensa con la regla de frecuencia:
-   * - Individual (es_familiar = false): 1 canje diario por usuario.
-   * - Familiar (es_familiar = true): 1 canje mensual para toda la familia.
+   * 2. Crear recompensa (Restringido exclusivamente al rol 'admin' / Jefe de Hogar)
    */
-  static async canjearRecompensaFamiliar(userId: string, rewardId: number) {
-    const client = await pool.connect();
+  async createReward(userId: string, userRole: string, familyId: string, data: { titulo: string; descripcion: string; emoji?: string; costo: number; es_familiar: boolean; metadata?: any }) {
+    if (userRole !== 'admin') {
+      throw new Error('Acceso denegado: Solo el jefe de hogar puede crear recompensas.');
+    }
 
+    const { titulo, descripcion, emoji, costo, es_familiar, metadata } = data;
+    const client = await pool.connect();
+    
+    try {
+      const result = await client.query(`
+        INSERT INTO public.family_rewards (family_id, titulo, descripcion, emoji, costo, disponible, creador_id, es_familiar, metadata)
+        VALUES ($1, $2, $3, $4, $5, TRUE, $6, $7, $8)
+        RETURNING id, titulo, descripcion, emoji, costo, disponible, es_familiar, metadata;
+      `, [familyId, titulo, descripcion, emoji || '🎁', costo, userId, es_familiar, metadata || JSON.stringify({ frecuencia: 'semanal' })]);
+
+      return result.rows[0];
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
+   * 3. Canjear recompensa (Valida saldo, cooldown familiar o límite diario personal, registra canje y avisa al admin)
+   */
+  async redeemReward(userId: string, rewardId: string) {
+    const client = await pool.connect();
     try {
       await client.query('BEGIN');
 
-      // 1. Obtener la recompensa
-      const rewardRes = await client.query(
-        'SELECT * FROM public.family_rewards WHERE id = $1 AND disponible = TRUE FOR UPDATE;', 
-        [rewardId]
-      );
+      // Obtener y bloquear el premio
+      const rewardRes = await client.query(`
+        SELECT id, costo, disponible, es_familiar, family_id, titulo, last_redeemed_at, metadata 
+        FROM public.family_rewards 
+        WHERE id = $1 FOR UPDATE;
+      `, [rewardId]);
+
+      if (rewardRes.rows.length === 0) {
+        throw new Error('La recompensa no existe.');
+      }
+
       const reward = rewardRes.rows[0];
 
-      if (!reward) throw new Error('La recompensa seleccionada no está disponible.');
+      if (!reward.disponible) {
+        throw new Error('Esta recompensa ya no se encuentra disponible.');
+      }
 
-      // 2. Obtener perfil de usuario y verificar monedas
-      const profileRes = await client.query(
-        'SELECT family_id, monedas FROM public.profiles WHERE id = $1 FOR UPDATE;', 
-        [userId]
-      );
+      // ─────────────────────────────────────────────────────────────────
+      // A. VALIDACIÓN PARA RECOMPENSAS FAMILIARES (Cooldown semanal o mensual)
+      // ─────────────────────────────────────────────────────────────────
+      if (reward.es_familiar && reward.last_redeemed_at) {
+        const lastRedeemed = new Date(reward.last_redeemed_at);
+        const now = new Date();
+        
+        const frecuencia = reward.metadata?.frecuencia || 'semanal'; 
+        let limitMilliseconds = 7 * 24 * 60 * 60 * 1000; // 7 días por defecto
+        let textoTiempo = 'una semana';
+
+        if (frecuencia === 'mensual') {
+          limitMilliseconds = 30 * 24 * 60 * 60 * 1000; // 30 días aprox
+          textoTiempo = 'un mes';
+        }
+
+        const diferenciaTiempo = now.getTime() - lastRedeemed.getTime();
+
+        if (diferenciaTiempo < limitMilliseconds) {
+          throw new Error(`Esta recompensa familiar ya fue canjeada recientemente. Estará disponible nuevamente en ${textoTiempo}.`);
+        }
+      }
+
+      // ─────────────────────────────────────────────────────────────────
+      // B. VALIDACIÓN PARA RECOMPENSAS PERSONALES / INDIVIDUALES (Máximo 1 vez por día por usuario)
+      // ─────────────────────────────────────────────────────────────────
+      if (!reward.es_familiar) {
+        const existingCanjeRes = await client.query(`
+          SELECT id FROM public.canjes 
+          WHERE user_id = $1 AND reward_id = $2 
+          AND created_at >= CURRENT_DATE;
+        `, [userId, rewardId]);
+
+        if (existingCanjeRes.rows.length > 0) {
+          throw new Error('Ya has canjeado esta recompensa personal hoy. Solo se permite un canje por día.');
+        }
+      }
+
+      // Obtener perfil y saldo del usuario
+      const profileRes = await client.query(`
+        SELECT id, nombre, monedas, family_id FROM public.profiles WHERE id = $1 FOR UPDATE;
+      `, [userId]);
+
+      if (profileRes.rows.length === 0) {
+        throw new Error('Perfil de usuario no encontrado.');
+      }
+
       const profile = profileRes.rows[0];
 
-      if (!profile) throw new Error('Perfil de usuario no encontrado.');
       if (profile.family_id !== reward.family_id) {
-        throw new Error('Esta recompensa no pertenece a tu grupo familiar.');
+        throw new Error('No puedes canjear recompensas de otra familia.');
       }
+
       if ((profile.monedas || 0) < reward.costo) {
-        throw new Error('No tienes suficientes monedas para realizar este canje.');
+        throw new Error('No tienes suficientes monedas para canjear este premio.');
       }
 
-      // 3. Validar restricción contra la tabla 'canjes'
-      if (reward.es_familiar) {
-        // ACTIVIDAD FAMILIAR: Máximo 1 al mes para la familia
-        const startOfMonth = new Date();
-        startOfMonth.setDate(1);
-        startOfMonth.setHours(0, 0, 0, 0);
+      // Descontar monedas
+      await client.query(`
+        UPDATE public.profiles SET monedas = monedas - $1 WHERE id = $2;
+      `, [reward.costo, userId]);
 
-        const checkFamily = await client.query(`
-          SELECT id FROM public.canjes
-          WHERE reward_id = $1 AND family_id = $2 AND created_at >= $3;
-        `, [rewardId, profile.family_id, startOfMonth.toISOString()]);
+      // Actualizar la fecha del último canje del premio (para las familiares)
+      await client.query(`
+        UPDATE public.family_rewards 
+        SET last_redeemed_at = CURRENT_TIMESTAMP 
+        WHERE id = $1;
+      `, [rewardId]);
 
-        if (checkFamily.rows.length > 0) {
-          throw new Error('Esta actividad familiar ya fue canjeada este mes por un integrante del hogar.');
-        }
-      } else {
-        // RECOMPENSA INDIVIDUAL: Máximo 1 al día por usuario
-        const startOfDay = new Date();
-        startOfDay.setHours(0, 0, 0, 0);
-
-        const checkUserDaily = await client.query(`
-          SELECT id FROM public.canjes
-          WHERE reward_id = $1 AND user_id = $2 AND created_at >= $3;
-        `, [rewardId, userId, startOfDay.toISOString()]);
-
-        if (checkUserDaily.rows.length > 0) {
-          throw new Error('Ya canjeaste esta recompensa hoy. Puedes volver a canjearla mañana.');
-        }
-      }
-
-      // 4. Descontar monedas y registrar en 'canjes'
-      const nuevoSaldo = profile.monedas - reward.costo;
-      await client.query('UPDATE public.profiles SET monedas = $1 WHERE id = $2;', [nuevoSaldo, userId]);
-
-      const redemptionRes = await client.query(`
+      // Registrar el canje en la tabla 'canjes'
+      await client.query(`
         INSERT INTO public.canjes (reward_id, user_id, family_id, costo_pagado)
-        VALUES ($1, $2, $3, $4)
-        RETURNING *;
+        VALUES ($1, $2, $3, $4);
       `, [rewardId, userId, profile.family_id, reward.costo]);
 
-      if (reward.es_familiar) {
-        await client.query('UPDATE public.family_rewards SET disponible = FALSE, last_redeemed_at = NOW() WHERE id = $1;', [rewardId]);
-      } else {
-        await client.query('UPDATE public.family_rewards SET last_redeemed_at = NOW() WHERE id = $1;', [rewardId]);
+      // Enviar Notificación automática al Jefe de Hogar con estilo mejorado
+      const adminRes = await client.query(`
+        SELECT id FROM public.profiles WHERE family_id = $1 AND rol = 'Jefe' LIMIT 1;
+      `, [profile.family_id]);
+
+      if (adminRes.rows.length > 0) {
+        const adminId = adminRes.rows[0].id;
+        
+        const emojiPremio = reward.emoji || '🎁';
+        const tipoTexto = reward.es_familiar ? 'familiar 👨‍👩‍👧‍👦' : 'personal 👤';
+
+        const titleNoti = `🎉 ¡Nuevo canje ${tipoTexto}!`;
+        const descNoti = `${profile.nombre || 'Un integrante'} ha canjeado ${emojiPremio} "${reward.titulo}" por un costo de ${reward.costo} monedas 🪙.`;
+        
+        await client.query(`
+          INSERT INTO public.notifications (user_id, title, desc_text, is_read, family_id, type, created_at)
+          VALUES ($1, $2, $3, FALSE, $4, 'reward', CURRENT_TIMESTAMP);
+        `, [adminId, titleNoti, descNoti, profile.family_id]);
       }
 
+      // ⚠️ ¡CLAVE! Confirmar los cambios en la base de datos
       await client.query('COMMIT');
 
       return {
-        exito: true,
-        recompensa: reward.titulo,
-        costo: reward.costo,
-        monedas_restantes: nuevoSaldo,
-        canje: redemptionRes.rows[0]
+        success: true,
+        message: `¡Canje exitoso de recompensa ${reward.es_familiar ? 'familiar' : 'personal'} ("${reward.titulo}")!`,
+        monedas_restantes: profile.monedas - reward.costo
       };
     } catch (error) {
       await client.query('ROLLBACK');
@@ -162,50 +179,4 @@ export class RewardService {
       client.release();
     }
   }
-
-  /**
-   * Reactivar manualmente un premio (Exclusivo Jefe de Hogar).
-   */
-  static async reactivarRecompensaManual(jefeId: string, rewardId: number, targetUserId?: string) {
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-
-      const profileRes = await client.query('SELECT family_id, rol FROM public.profiles WHERE id = $1', [jefeId]);
-      const profile = profileRes.rows[0];
-
-      const userRol = profile?.rol ? profile.rol.toString().toLowerCase().trim() : '';
-
-      if (!profile || userRol !== 'jefe') {
-        throw new Error('Solo el Jefe de Hogar tiene permisos para reactivar recompensas.');
-      }
-
-      const startOfMonth = new Date();
-      startOfMonth.setDate(1);
-      startOfMonth.setHours(0, 0, 0, 0);
-
-      if (targetUserId) {
-        await client.query(`
-          DELETE FROM public.canjes 
-          WHERE reward_id = $1 AND user_id = $2 AND created_at >= $3;
-        `, [rewardId, targetUserId, startOfMonth.toISOString()]);
-      } else {
-        await client.query(`
-          DELETE FROM public.canjes 
-          WHERE reward_id = $1 AND created_at >= $2;
-        `, [rewardId, startOfMonth.toISOString()]);
-      }
-
-      await client.query('UPDATE public.family_rewards SET disponible = TRUE WHERE id = $1;', [rewardId]);
-
-      await client.query('COMMIT');
-
-      return { exito: true, message: 'Recompensa reactivada exitosamente por el Jefe de Hogar.' };
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
-  } 
 }

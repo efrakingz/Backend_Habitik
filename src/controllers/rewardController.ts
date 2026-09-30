@@ -1,69 +1,45 @@
-import { Request, Response } from 'express';
+import { Response } from 'express';
 import { RewardService } from '../services/rewardService';
 
+const rewardService = new RewardService();
+
 export class RewardController {
-  static async crearRecompensa(req: Request, res: Response) {
+  
+  // Listar recompensas de la familia
+  async getAll(req: any, res: Response) {
     try {
-      const jefeId = req.auth?.user_id || req.body.user_id;
-      const { titulo, descripcion, costo_monedas, es_familiar } = req.body;
-
-      if (!jefeId || !titulo || !costo_monedas) {
-        return res.status(400).json({ ok: false, error: 'Parámetros obligatorios: user_id, titulo, costo_monedas.' });
-      }
-
-      const reward = await RewardService.crearRecompensaFamiliar(
-        jefeId, 
-        titulo, 
-        descripcion || '', 
-        Number(costo_monedas), 
-        Boolean(es_familiar)
-      );
-
-      return res.status(201).json({ ok: true, data: reward });
+      const familyId = req.auth.family_id;
+      const rewards = await rewardService.getRewardsByFamily(familyId);
+      return res.status(200).json({ success: true, data: rewards });
     } catch (error: any) {
-      return res.status(400).json({ ok: false, error: error.message });
+      return res.status(400).json({ success: false, message: error.message });
     }
   }
 
-  static async listarRecompensas(req: Request, res: Response) {
+  // Crear recompensa (Solo Admin / Jefe de Hogar)
+  async create(req: any, res: Response) {
     try {
-      const userId = req.auth?.user_id || req.query.user_id;
-      const rewards = await RewardService.listarRecompensasFamiliares(String(userId));
-      return res.status(200).json({ ok: true, data: rewards });
+      const userId = req.auth.user_id;
+      const userRole = req.auth.role; 
+      const familyId = req.auth.family_id;
+
+      const newReward = await rewardService.createReward(userId, userRole, familyId, req.body);
+      return res.status(201).json({ success: true, data: newReward });
     } catch (error: any) {
-      return res.status(500).json({ ok: false, error: error.message });
+      return res.status(400).json({ success: false, message: error.message });
     }
   }
 
-  static async canjearRecompensa(req: Request, res: Response) {
+  // Canjear recompensa (Cualquier usuario)
+  async redeem(req: any, res: Response) {
     try {
-      const userId = req.auth?.user_id || req.body.user_id;
-      const { reward_id } = req.body;
+      const userId = req.auth.user_id;
+      const { rewardId } = req.body;
 
-      if (!userId || !reward_id) {
-        return res.status(400).json({ ok: false, error: 'Parámetro reward_id requerido.' });
-      }
-
-      const result = await RewardService.canjearRecompensaFamiliar(userId, Number(reward_id));
-      return res.status(200).json({ ok: true, data: result });
+      const result = await rewardService.redeemReward(userId, rewardId);
+      return res.status(200).json(result);
     } catch (error: any) {
-      return res.status(400).json({ ok: false, error: error.message });
-    }
-  }
-
-  static async reactivarRecompensa(req: Request, res: Response) {
-    try {
-      const jefeId = req.auth?.user_id || req.body.user_id;
-      const { reward_id, target_user_id } = req.body;
-
-      if (!jefeId || !reward_id) {
-        return res.status(400).json({ ok: false, error: 'Faltan parámetros (user_id, reward_id).' });
-      }
-
-      const result = await RewardService.reactivarRecompensaManual(jefeId, Number(reward_id), target_user_id);
-      return res.status(200).json({ ok: true, data: result });
-    } catch (error: any) {
-      return res.status(400).json({ ok: false, error: error.message });
+      return res.status(400).json({ success: false, message: error.message });
     }
   }
 }
