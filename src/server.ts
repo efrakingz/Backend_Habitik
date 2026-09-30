@@ -17,6 +17,7 @@ import rewardRoutes from './routes/rewardRoutes';
 import { getPerfil } from './controllers/authController';
 import { verifyToken } from './middleware/auth';
 import logrosRoutes from './routes/logrosRoutes';
+import wordleRoutes from './routes/wordleRoutes';
 
 dotenv.config();
 
@@ -127,6 +128,7 @@ app.use('/reto', showerRoutes);           // Speedrun de ducha cronometrada
 app.use('/eco', ecoRoutes);               // Mini-juego Eco-Puzzle
 app.use('/rewards', rewardRoutes);         // Catálogo y canje de recompensas
 app.use('/logros', logrosRoutes);
+app.use('/wordle', wordleRoutes);
 
 // Notificaciones y alertas
 app.use('/notifications', notificationRoutes);
