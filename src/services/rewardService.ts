@@ -21,10 +21,10 @@ export class RewardService {
   }
 
   /**
-   * 2. Crear recompensa (Restringido exclusivamente al rol 'admin' / Jefe de Hogar)
+   * 2. Crear recompensa (Restringido exclusivamente al rol 'Jefe' / Admin)
    */
   async createReward(userId: string, userRole: string, familyId: string, data: { titulo: string; descripcion: string; emoji?: string; costo: number; es_familiar: boolean; metadata?: any }) {
-    if (userRole !== 'admin') {
+    if (userRole !== 'Jefe' && userRole !== 'admin') {
       throw new Error('Acceso denegado: Solo el jefe de hogar puede crear recompensas.');
     }
 
@@ -138,10 +138,10 @@ export class RewardService {
         WHERE id = $1;
       `, [rewardId]);
 
-      // Registrar el canje en la tabla 'canjes'
+      // Registrar el canje en la tabla 'canjes' con estado inicial 'pendiente'
       await client.query(`
-        INSERT INTO public.canjes (reward_id, user_id, family_id, costo_pagado)
-        VALUES ($1, $2, $3, $4);
+        INSERT INTO public.canjes (reward_id, user_id, family_id, costo_pagado, estado)
+        VALUES ($1, $2, $3, $4, 'pendiente');
       `, [rewardId, userId, profile.family_id, reward.costo]);
 
       // Enviar Notificación automática al Jefe de Hogar con estilo mejorado
@@ -156,7 +156,7 @@ export class RewardService {
         const tipoTexto = reward.es_familiar ? 'familiar 👨‍👩‍👧‍👦' : 'personal 👤';
 
         const titleNoti = `🎉 ¡Nuevo canje ${tipoTexto}!`;
-        const descNoti = `${profile.nombre || 'Un integrante'} ha canjeado ${emojiPremio} "${reward.titulo}" por un costo de ${reward.costo} monedas 🪙.`;
+        const descNoti = `${profile.nombre || 'Un integrante'} ha solicitado el premio ${emojiPremio} "${reward.titulo}" por un costo de ${reward.costo} monedas 🪙.`;
         
         await client.query(`
           INSERT INTO public.notifications (user_id, title, desc_text, is_read, family_id, type, created_at)
@@ -164,14 +164,122 @@ export class RewardService {
         `, [adminId, titleNoti, descNoti, profile.family_id]);
       }
 
-      // ⚠️ ¡CLAVE! Confirmar los cambios en la base de datos
+      // Confirmar los cambios en la base de datos
       await client.query('COMMIT');
 
       return {
         success: true,
-        message: `¡Canje exitoso de recompensa ${reward.es_familiar ? 'familiar' : 'personal'} ("${reward.titulo}")!`,
+        message: `¡Canje solicitado exitosamente (${reward.es_familiar ? 'familiar' : 'personal'}) ("${reward.titulo}")!`,
         monedas_restantes: profile.monedas - reward.costo
       };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
+   * 4. Obtener canjes pendientes de la familia (Para el panel del Jefe)
+   */
+  async getPendingCanjes(familyId: string) {
+    const client = await pool.connect();
+    try {
+      const result = await client.query(`
+        SELECT c.id, c.reward_id, c.user_id, c.costo_pagado, c.estado, c.created_at,
+               p.nombre as usuario_nombre, p.avatar as usuario_avatar,
+               r.titulo as reward_titulo, r.emoji as reward_emoji
+        FROM public.canjes c
+        JOIN public.profiles p ON c.user_id = p.id
+        JOIN public.family_rewards r ON c.reward_id = r.id
+        WHERE c.family_id = $1 AND c.estado = 'pendiente'
+        ORDER BY c.created_at DESC;
+      `, [familyId]);
+      return result.rows;
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
+   * 5. Aprobar un canje pendiente (Solo Jefe de Hogar)
+   */
+  async approveCanje(adminRole: string, canjeId: number) {
+    if (adminRole !== 'Jefe' && adminRole !== 'admin') {
+      throw new Error('Acceso denegado: Solo el jefe de hogar puede aprobar canjes.');
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      const canjeRes = await client.query(`
+        SELECT id, estado FROM public.canjes WHERE id = $1 FOR UPDATE;
+      `, [canjeId]);
+
+      if (canjeRes.rows.length === 0) {
+        throw new Error('La solicitud de canje no existe.');
+      }
+
+      const canje = canjeRes.rows[0];
+
+      if (canje.estado !== 'pendiente') {
+        throw new Error(`Esta solicitud ya fue procesada anteriormente (${canje.estado}).`);
+      }
+
+      await client.query(`
+        UPDATE public.canjes SET estado = 'aprobado' WHERE id = $1;
+      `, [canjeId]);
+
+      await client.query('COMMIT');
+      return { success: true, message: '¡Canje aprobado exitosamente!' };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
+   * 6. Rechazar un canje pendiente y reembolsar monedas (Solo Jefe de Hogar)
+   */
+  async rejectCanje(adminRole: string, canjeId: number) {
+    if (adminRole !== 'Jefe' && adminRole !== 'admin') {
+      throw new Error('Acceso denegado: Solo el jefe de hogar puede rechazar canjes.');
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      const canjeRes = await client.query(`
+        SELECT id, user_id, costo_pagado, estado FROM public.canjes WHERE id = $1 FOR UPDATE;
+      `, [canjeId]);
+
+      if (canjeRes.rows.length === 0) {
+        throw new Error('La solicitud de canje no existe.');
+      }
+
+      const canje = canjeRes.rows[0];
+
+      if (canje.estado !== 'pendiente') {
+        throw new Error(`Esta solicitud ya fue procesada anteriormente (${canje.estado}).`);
+      }
+
+      // 1. Cambiar estado a rechazado
+      await client.query(`
+        UPDATE public.canjes SET estado = 'rechazado' WHERE id = $1;
+      `, [canjeId]);
+
+      // 2. Reembolsar las monedas al usuario
+      await client.query(`
+        UPDATE public.profiles SET monedas = monedas + $1 WHERE id = $2;
+      `, [canje.costo_pagado, canje.user_id]);
+
+      await client.query('COMMIT');
+      return { success: true, message: 'Canje rechazado y monedas reembolsadas al usuario con éxito.' };
     } catch (error) {
       await client.query('ROLLBACK');
       throw error;
