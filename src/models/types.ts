@@ -112,6 +112,9 @@ export interface FamilyReward {
   disponible: boolean;
   es_familiar: boolean;
   creador_id?: string | null;
+  propuesto_por?: string | null;
+  estado?: 'activo' | 'propuesto' | 'rechazado';
+  fecha_propuesta?: string | null;
   metadata?: Record<string, unknown>;
   last_redeemed_at?: Date | null;
   created_at: Date;
@@ -123,6 +126,21 @@ export interface FamilyRewardRedemption {
   user_id: string;
   family_id: string;
   costo_pagado: number;
+  estado?: string;
+  es_colecta?: boolean;
+  total_requerido?: number;
+  total_recaudado?: number;
+  created_at: Date;
+}
+
+export interface CanjeAporte {
+  id: string;
+  canje_id: string;
+  user_id: string;
+  monto_asignado: number;
+  monto_pagado: number;
+  pagado: boolean;
+  pagado_en?: Date | null;
   created_at: Date;
 }
 
