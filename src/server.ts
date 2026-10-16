@@ -5,6 +5,7 @@ import { Server as SocketIOServer } from 'socket.io';
 import app from './app';
 import { pool } from './config/db';
 import { startNotificationScheduler } from './services/notificationScheduler';
+import { broadcastFamilyLiveEvent } from './utils/eventBroadcaster';
 
 dotenv.config();
 
@@ -67,23 +68,12 @@ if (process.env.DATABASE_URL) {
       console.error('⚠️ [PostgreSQL] Error conectando pgListener:', err.message);
     });
 
-  const recentEmittedEvents = new Map<string, number>();
-
   pgListener.on('notification', (msg) => {
     try {
       if (msg.payload) {
         const data = JSON.parse(msg.payload);
         if (data.family_id) {
-          const now = Date.now();
-          const emitKey = `${data.id || data.titulo}_${data.family_id}`;
-
-          if (recentEmittedEvents.has(emitKey) && now - (recentEmittedEvents.get(emitKey) || 0) < 3000) {
-            return;
-          }
-          recentEmittedEvents.set(emitKey, now);
-
-          io.to(`familia_${data.family_id}`).emit('evento_en_vivo', data);
-          console.log(`🔔 [Trigger Event] Retransmitido a sala familia_${data.family_id}:`, data.titulo);
+          broadcastFamilyLiveEvent(io, data.family_id, data);
         }
       }
     } catch (error) {

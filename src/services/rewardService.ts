@@ -1,4 +1,5 @@
 import { pool } from '../config/db';
+import { broadcastFamilyLiveEvent } from '../utils/eventBroadcaster';
 
 export class RewardService {
   
@@ -105,7 +106,7 @@ export class RewardService {
 
       // Emitir evento WebSocket para que la tienda de todos los miembros se actualice
       if (io) {
-        io.to(`familia_${familyId}`).emit('evento_en_vivo', {
+        broadcastFamilyLiveEvent(io, familyId, {
           tipo: 'PREMIO_CREADO',
           family_id: familyId,
           titulo: '🎁 ¡Nuevo premio en la tienda!',
@@ -184,7 +185,7 @@ export class RewardService {
         `, [adminId, familyId, userId, userName, titleNoti, descNoti, JSON.stringify({ reward_id: propuesta.id })]);
 
         if (io) {
-          io.to(`familia_${familyId}`).emit('evento_en_vivo', {
+          broadcastFamilyLiveEvent(io, familyId, {
             tipo: 'PROPUESTA_NUEVA',
             user_id: adminId,
             family_id: familyId,
@@ -212,7 +213,7 @@ export class RewardService {
     const client = await pool.connect();
     try {
       const result = await client.query(`
-        SELECT r.id, r.family_id, r.titulo, r.descripcion, r.emoji, r.created_at, r.fecha_propuesta,
+        SELECT r.id, r.family_id, r.titulo, r.descripcion, r.emoji, r.icono, r.es_familiar, r.costo, r.created_at, r.fecha_propuesta,
                p.id as usuario_id, p.nombre as usuario_nombre, p.avatar as usuario_avatar, p.monedas as usuario_monedas
         FROM public.family_rewards r
         JOIN public.profiles p ON r.propuesto_por = p.id
@@ -226,13 +227,21 @@ export class RewardService {
   }
 
   /**
-   * 5. Aprobar propuesta asignando el costo en monedas (Solo Jefe de Hogar)
+   * 5. Aprobar propuesta asignando el costo en monedas y modo (Solo Jefe de Hogar)
+   * Permite editar el título, descripción, icono y transformarla en premio familiar colaborativo
    */
   async approveProposal(
     adminRole: string, 
     familyId: string, 
     rewardId: string | number, 
     costo: number, 
+    options?: {
+      es_familiar?: boolean;
+      titulo?: string;
+      descripcion?: string;
+      icono?: string;
+      emoji?: string;
+    },
     io?: any
   ) {
     const roleNormalized = (adminRole || '').toLowerCase();
@@ -260,43 +269,65 @@ export class RewardService {
 
       const prop = propRes.rows[0];
 
-      // Actualizar premio a estado 'activo' con el costo asignado
+      // Determinar si el jefe cambió a familiar o editó campos
+      const isFamiliar = options?.es_familiar !== undefined ? Boolean(options.es_familiar) : Boolean(prop.es_familiar);
+      const nuevoTitulo = (options?.titulo && options.titulo.trim().length > 0) ? options.titulo.trim() : prop.titulo;
+      const nuevaDesc = options?.descripcion !== undefined ? options.descripcion.trim() : prop.descripcion;
+      const nuevoIcono = options?.icono || options?.emoji || prop.icono || prop.emoji || '🎁';
+
+      // Actualizar premio a estado 'activo' con el costo asignado, es_familiar y campos editados
       await client.query(`
         UPDATE public.family_rewards 
-        SET costo = $1, estado = 'activo', disponible = TRUE 
-        WHERE id = $2;
-      `, [costo, rewardId]);
+        SET costo = $1, estado = 'activo', disponible = TRUE, es_familiar = $2, titulo = $3, descripcion = $4, icono = $5, emoji = $5
+        WHERE id = $6;
+      `, [costo, isFamiliar, nuevoTitulo, nuevaDesc, nuevoIcono, rewardId]);
 
-      // Notificar al miembro que propuso
-      if (prop.propuesto_por) {
-        const titleNoti = '🎉 ¡Tu propuesta fue aprobada!';
-        const descNoti = `El Jefe aprobó tu premio "${prop.titulo}" con un costo de ${costo} 🪙. ¡Ya puedes canjearlo en la tienda!`;
+      // Notificar al miembro que propuso y/o a toda la familia
+      const titleNoti = isFamiliar 
+        ? '🎉 ¡Propuesta aprobada como Colecta Familiar!' 
+        : '🎉 ¡Tu propuesta fue aprobada!';
+      const descNoti = isFamiliar
+        ? `El Jefe aprobó "${nuevoTitulo}" como Premio Familiar Colaborativo (${costo} 🪙 entre todos). ¡Ya pueden iniciar la colecta en la tienda!`
+        : `El Jefe aprobó tu premio "${nuevoTitulo}" con un costo de ${costo} 🪙. ¡Ya puedes canjearlo en la tienda!`;
 
-        await client.query(`
-          INSERT INTO public.notifications (
-            user_id, family_id, title, desc_text, type, created_at, visual, payload
-          )
-          VALUES ($1, $2, $3, $4, 'PROPUESTA_APROBADA', CURRENT_TIMESTAMP, 
-                  '{"icon": "check_circle", "color": "#43A047"}'::jsonb, 
-                  $5::jsonb);
-        `, [prop.propuesto_por, familyId, titleNoti, descNoti, JSON.stringify({ reward_id: prop.id, costo })]);
+      // Si es familiar colaborativo, se notifica a la familia (user_id = null); si es personal, al proponente
+      await client.query(`
+        INSERT INTO public.notifications (
+          user_id, family_id, title, desc_text, type, created_at, visual, payload
+        )
+        VALUES ($1, $2, $3, $4, 'PROPUESTA_APROBADA', CURRENT_TIMESTAMP, 
+                $5::jsonb, 
+                $6::jsonb);
+      `, [
+        isFamiliar ? null : prop.propuesto_por, 
+        familyId, 
+        titleNoti, 
+        descNoti,
+        JSON.stringify({ icon: isFamiliar ? 'groups' : 'check_circle', color: isFamiliar ? '#FFA000' : '#43A047' }),
+        JSON.stringify({ reward_id: prop.id, costo, es_familiar: isFamiliar, titulo: nuevoTitulo })
+      ]);
 
-        if (io) {
-          io.to(`familia_${familyId}`).emit('evento_en_vivo', {
-            tipo: 'PROPUESTA_APROBADA',
-            user_id: prop.propuesto_por,
-            family_id: familyId,
-            reward_id: prop.id,
-            reward_titulo: prop.titulo,
-            costo,
-            titulo: titleNoti,
-            mensaje: descNoti
-          });
-        }
+      if (io) {
+        broadcastFamilyLiveEvent(io, familyId, {
+          tipo: 'PROPUESTA_APROBADA',
+          user_id: prop.propuesto_por,
+          family_id: familyId,
+          reward_id: prop.id,
+          reward_titulo: nuevoTitulo,
+          costo,
+          es_familiar: isFamiliar,
+          titulo: titleNoti,
+          mensaje: descNoti
+        });
       }
 
       await client.query('COMMIT');
-      return { success: true, message: 'Propuesta aprobada y publicada en la tienda.' };
+      return { 
+        success: true, 
+        message: isFamiliar 
+          ? 'Propuesta aprobada y publicada como Colecta Familiar Colaborativa.' 
+          : 'Propuesta aprobada y publicada como Premio Personal.' 
+      };
     } catch (error) {
       await client.query('ROLLBACK');
       throw error;
@@ -357,7 +388,7 @@ export class RewardService {
         `, [prop.propuesto_por, familyId, titleNoti, descNoti]);
 
         if (io) {
-          io.to(`familia_${familyId}`).emit('evento_en_vivo', {
+          broadcastFamilyLiveEvent(io, familyId, {
             tipo: 'PROPUESTA_RECHAZADA',
             user_id: prop.propuesto_por,
             family_id: familyId,
@@ -603,7 +634,7 @@ export class RewardService {
         `, [familyId, titleFamily, descFamily, JSON.stringify({ reward_id: reward.id, canje_id: canjeId })]);
 
         if (io) {
-          io.to(`familia_${familyId}`).emit('evento_en_vivo', {
+          broadcastFamilyLiveEvent(io, familyId, {
             tipo: 'COLECTA_COMPLETADA',
             family_id: familyId,
             reward_id: reward.id,
@@ -631,7 +662,7 @@ export class RewardService {
         `, [familyId, userId, currentUser.nombre, titleNoti, descNoti, JSON.stringify({ reward_id: reward.id, canje_id: canjeId })]);
 
         if (io) {
-          io.to(`familia_${familyId}`).emit('evento_en_vivo', {
+          broadcastFamilyLiveEvent(io, familyId, {
             tipo: esNuevoInicio ? 'COLECTA_INICIADA' : 'COLECTA_APORTE',
             family_id: familyId,
             reward_id: reward.id,
@@ -764,7 +795,7 @@ export class RewardService {
         `, [adminId, profile.family_id, userId, profile.nombre, titleNoti, descNoti, JSON.stringify({ canje_id: canjeId, reward_id: reward.id })]);
 
         if (io) {
-          io.to(`familia_${profile.family_id}`).emit('evento_en_vivo', {
+          broadcastFamilyLiveEvent(io, profile.family_id, {
             tipo: 'CANJE_SOLICITADO',
             user_id: adminId,
             family_id: profile.family_id,
@@ -865,7 +896,7 @@ export class RewardService {
       `, [canje.user_id, canje.family_id, titleNoti, descNoti, JSON.stringify({ canje_id: canje.id, reward_id: canje.reward_id })]);
 
       if (io) {
-        io.to(`familia_${canje.family_id}`).emit('evento_en_vivo', {
+        broadcastFamilyLiveEvent(io, canje.family_id, {
           tipo: 'CANJE_APROBADO',
           user_id: canje.user_id,
           family_id: canje.family_id,
@@ -942,7 +973,7 @@ export class RewardService {
       `, [canje.user_id, canje.family_id, titleNoti, descNoti, JSON.stringify({ canje_id: canje.id, reward_id: canje.reward_id, motivo })]);
 
       if (io) {
-        io.to(`familia_${canje.family_id}`).emit('evento_en_vivo', {
+        broadcastFamilyLiveEvent(io, canje.family_id, {
           tipo: 'CANJE_RECHAZADO',
           user_id: canje.user_id,
           family_id: canje.family_id,

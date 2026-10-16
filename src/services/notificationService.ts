@@ -1,6 +1,7 @@
 import { NotificationRepository } from '../repositories/notificationRepository';
 import { AppNotification } from '../models/types';
 import { Server as SocketIOServer } from 'socket.io';
+import { broadcastFamilyLiveEvent } from '../utils/eventBroadcaster';
 
 export class NotificationService {
   private repo: NotificationRepository;
@@ -42,10 +43,9 @@ export class NotificationService {
       creado_en: saved.created_at || new Date(),
     };
 
-    // Emisión en tiempo real vía Socket.io para clientes activos / en segundo plano
+    // Emisión en tiempo real vía Socket.io para clientes activos / en segundo plano con deduplicación
     if (io && saved.family_id) {
-      io.to(`familia_${saved.family_id}`).emit('evento_en_vivo', eventPayload);
-      console.log(`📡 [Socket.io] Evento emitido a sala familia_${saved.family_id}:`, saved.title);
+      broadcastFamilyLiveEvent(io, saved.family_id, eventPayload);
     }
 
     return saved;

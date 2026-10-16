@@ -67,16 +67,29 @@ export class RewardController {
     }
   }
 
-  // Aprobar propuesta fijando el costo en monedas (Solo Jefe)
+  // Aprobar propuesta fijando el costo en monedas y modo (Solo Jefe)
   async approveProposal(req: any, res: Response) {
     try {
       const adminRole = req.auth.rol || req.auth.role;
       const familyId = req.auth.family_id;
       const { id } = req.params;
-      const { costo } = req.body;
+      const { costo, es_familiar, titulo, descripcion, icono, emoji } = req.body;
       const io = req.app.get('io');
 
-      const result = await rewardService.approveProposal(adminRole, familyId, id, Number(costo), io);
+      const result = await rewardService.approveProposal(
+        adminRole, 
+        familyId, 
+        id, 
+        Number(costo), 
+        {
+          es_familiar: es_familiar !== undefined ? Boolean(es_familiar) : undefined,
+          titulo,
+          descripcion,
+          icono,
+          emoji,
+        },
+        io
+      );
       return res.status(200).json(result);
     } catch (error: any) {
       return res.status(400).json({ success: false, message: error.message });
