@@ -7,7 +7,7 @@ import { createTriviaRouter } from './triviaRoutes';
 
 const sessionId = '11111111-1111-4111-8111-111111111111';
 const questionId = '22222222-2222-4222-8222-222222222222';
-const token = jwt.sign({ user_id: 'user-from-token', family_id: null, role: 'miembro' }, 'super_secret_jwt_key_12345');
+const token = jwt.sign({ user_id: 'user-from-token', family_id: null, role: 'miembro' }, process.env.JWT_SECRET || 'super_secret_jwt_key_12345');
 
 function createTestApp(service: Record<string, unknown>) {
   const app = express();

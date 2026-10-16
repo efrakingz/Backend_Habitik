@@ -15,6 +15,7 @@ const prompt = [
   'Usa lenguaje claro, contexto chileno cuando corresponda y hechos comprobables.',
   'Cada pregunta debe tener cuatro alternativas distintas y una respuesta inequívoca.',
   'La explicación debe enseñar el concepto y tener un máximo de 240 caracteres.',
+  'Cada elemento debe incluir un "datoCurioso" de máximo 180 caracteres, redactado como dato asombroso o consejo directo para familias (ej: "💡 ¿Sabías que...?" o "🌱 Eco-Tip: ...").',
   'Distribuye las categorías energia, agua, reciclaje, biodiversidad y consumo_responsable.',
   'No incluyas datos personales ni solicites información de usuarios.',
 ].join(' ');
@@ -25,7 +26,7 @@ const schema = {
   maxItems: 10,
   items: {
     type: 'OBJECT',
-    required: ['pregunta', 'alternativas', 'correctIndex', 'explicacion', 'categoria', 'dificultad'],
+    required: ['pregunta', 'alternativas', 'correctIndex', 'explicacion', 'categoria', 'dificultad', 'datoCurioso'],
     properties: {
       pregunta: { type: 'STRING' },
       alternativas: { type: 'ARRAY', minItems: 4, maxItems: 4, items: { type: 'STRING' } },
@@ -33,6 +34,7 @@ const schema = {
       explicacion: { type: 'STRING', maxLength: 240 },
       categoria: { type: 'STRING', enum: [...TRIVIA_CATEGORIES] },
       dificultad: { type: 'STRING', enum: ['facil', 'media', 'dificil'] },
+      datoCurioso: { type: 'STRING', maxLength: 180 },
     },
   },
 };
@@ -58,6 +60,9 @@ function validateQuestion(value: unknown): TriviaQuestionDraft {
   }
   if (!TRIVIA_CATEGORIES.includes(item.categoria as never)) throw new GeminiUnavailableError('Gemini devolvió una categoría inválida.');
   if (!isDifficulty(item.dificultad)) throw new GeminiUnavailableError('Gemini devolvió una dificultad inválida.');
+  if (typeof item.datoCurioso !== 'string' || item.datoCurioso.trim() === '' || item.datoCurioso.length > 260) {
+    throw new GeminiUnavailableError('Gemini devolvió un dato curioso inválido.');
+  }
 
   return {
     pregunta: item.pregunta.trim(),
@@ -66,6 +71,7 @@ function validateQuestion(value: unknown): TriviaQuestionDraft {
     explicacion: item.explicacion.trim(),
     categoria: item.categoria as TriviaQuestionDraft['categoria'],
     dificultad: item.dificultad,
+    datoCurioso: item.datoCurioso.trim(),
   };
 }
 

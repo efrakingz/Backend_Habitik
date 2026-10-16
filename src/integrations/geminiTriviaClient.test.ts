@@ -8,6 +8,7 @@ const question = {
   explicacion: 'Apagar luces que no se usan reduce el consumo eléctrico.',
   categoria: 'energia',
   dificultad: 'facil',
+  datoCurioso: '💡 Apagar las luces al salir de una habitación ahorra hasta un 15% en tu cuenta mensual.',
 };
 
 function successResponse(items = Array.from({ length: 10 }, (_, index) => ({ ...question, pregunta: `${question.pregunta} ${index}` }))) {
@@ -31,6 +32,7 @@ describe('GeminiTriviaClient', () => {
     const result = await new GeminiTriviaClient(fetcher).generateQuestions();
 
     expect(result).toHaveLength(10);
+    expect(result[0].datoCurioso).toBeDefined();
     const request = JSON.parse(String(fetcher.mock.calls[0][1]?.body));
     const sentPrompt = request.contents[0].parts[0].text;
     expect(sentPrompt).not.toMatch(/user_id|family_id|correo|nombre del usuario/i);
@@ -42,6 +44,7 @@ describe('GeminiTriviaClient', () => {
     [{ ...question, alternativas: ['A', 'A', 'B', 'C'] }, 'repetidas'],
     [{ ...question, correctIndex: 4 }, 'índice'],
     [{ ...question, categoria: 'otro' }, 'categoría'],
+    [{ ...question, datoCurioso: '' }, 'dato curioso'],
   ])('rechaza contenido inválido: %s', async (invalid, expected) => {
     process.env.GEMINI_API_KEY = 'clave-secreta';
     const items = Array.from({ length: 10 }, (_, index) => ({ ...question, pregunta: `${question.pregunta} ${index}` }));

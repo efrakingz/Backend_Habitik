@@ -4,6 +4,7 @@ import { Client as PgClient } from 'pg';
 import { Server as SocketIOServer } from 'socket.io';
 import app from './app';
 import { pool } from './config/db';
+import { startNotificationScheduler } from './services/notificationScheduler';
 
 dotenv.config();
 
@@ -100,6 +101,9 @@ server.listen(PORT, async () => {
   try {
     const result = await pool.query('SELECT NOW()');
     console.log(`  ✅ DB PostgreSQL conectada: ${result.rows[0].now}`);
+
+    // Iniciar programador autónomo de notificaciones periódicas
+    startNotificationScheduler(io);
   } catch (error) {
     console.error('  ❌ [CRÍTICO] No se pudo conectar a la base de datos.');
     if (error instanceof Error) console.error(' ', error.message);

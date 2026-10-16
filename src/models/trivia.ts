@@ -16,12 +16,14 @@ export interface TriviaQuestionDraft {
   explicacion: string;
   categoria: TriviaCategory;
   dificultad: TriviaDifficulty;
+  datoCurioso?: string;
 }
 
 export interface TriviaQuestion extends TriviaQuestionDraft {
   id: string;
   fuente: 'curada' | 'gemini';
   fingerprint: string;
+  dato_curioso?: string | null;
 }
 
 export interface TriviaSessionSummary {

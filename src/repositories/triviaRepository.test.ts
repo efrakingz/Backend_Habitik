@@ -21,4 +21,21 @@ describe('TriviaRepository', () => {
     expect(repository.getGeneratedCapacity(60, 110)).toBe(10);
     expect(repository.getGeneratedCapacity(65, 119)).toBe(1);
   });
+
+  it('obtiene una curiosidad de la base de datos o retorna fallback si está vacía', async () => {
+    // 1. Caso con dato_curioso en DB
+    const queryWithDb = vi.fn().mockResolvedValue({
+      rows: [{ dato_curioso: '💡 Los paneles solares ahorran hasta 60%', categoria: 'energia' }],
+    });
+    const repoWithDb = new TriviaRepository({ query: queryWithDb } as never);
+    const resultDb = await repoWithDb.getRandomCuriosidad('energia');
+    expect(resultDb?.curiosidad).toBe('💡 Los paneles solares ahorran hasta 60%');
+
+    // 2. Caso fallback (sin registros en DB)
+    const queryEmpty = vi.fn().mockResolvedValue({ rows: [] });
+    const repoEmpty = new TriviaRepository({ query: queryEmpty } as never);
+    const resultFallback = await repoEmpty.getRandomCuriosidad('agua');
+    expect(resultFallback).not.toBeNull();
+    expect(resultFallback?.curiosidad).toContain('💡 ¿Sabías que?');
+  });
 });
