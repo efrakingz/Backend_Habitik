@@ -213,7 +213,7 @@ export class RewardService {
     const client = await pool.connect();
     try {
       const result = await client.query(`
-        SELECT r.id, r.family_id, r.titulo, r.descripcion, r.emoji, r.icono, r.es_familiar, r.costo, r.created_at, r.fecha_propuesta,
+        SELECT r.id, r.family_id, r.titulo, r.descripcion, r.emoji AS icono, r.icono, r.es_familiar, r.costo, r.created_at, r.fecha_propuesta,
                p.id as usuario_id, p.nombre as usuario_nombre, p.avatar as usuario_avatar, p.monedas as usuario_monedas
         FROM public.family_rewards r
         JOIN public.profiles p ON r.propuesto_por = p.id
@@ -278,7 +278,7 @@ export class RewardService {
       // Actualizar premio a estado 'activo' con el costo asignado, es_familiar y campos editados
       await client.query(`
         UPDATE public.family_rewards 
-        SET costo = $1, estado = 'activo', disponible = TRUE, es_familiar = $2, titulo = $3, descripcion = $4, icono = $5, emoji = $5
+        SET costo = $1, estado = 'activo', disponible = TRUE, es_familiar = $2, titulo = $3, descripcion = $4, emoji = $5
         WHERE id = $6;
       `, [costo, isFamiliar, nuevoTitulo, nuevaDesc, nuevoIcono, rewardId]);
 
@@ -987,6 +987,69 @@ export class RewardService {
 
       await client.query('COMMIT');
       return { success: true, message: 'Canje rechazado y monedas reembolsadas al usuario con éxito.' };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+  /**
+   * Reclamar recompensa de 10 monedas por cada nivel subido.
+   */
+  static async reclamarRecompensaNivel(userId: string) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // 1. Obtener perfil con bloqueo FOR UPDATE para evitar cobros dobles simultáneos
+      const profRes = await client.query(
+        `SELECT nivel, ultimo_nivel_reclamado, monedas FROM public.profiles WHERE id = $1 FOR UPDATE;`, 
+        [userId]
+      );
+
+      if (profRes.rows.length === 0) throw new Error('Perfil no encontrado.');
+
+      const perfil = profRes.rows[0];
+      const nivelActual = perfil.nivel || 1;
+      const ultimoReclamado = perfil.ultimo_nivel_reclamado || 1;
+
+      // 2. Calcular cuántos niveles no ha cobrado
+      const nivelesPorCobrar = nivelActual - ultimoReclamado;
+
+      if (nivelesPorCobrar <= 0) {
+        await client.query('ROLLBACK');
+        return { 
+          exito: false, 
+          mensaje: 'No tienes nuevas recompensas de nivel pendientes por reclamar.' 
+        };
+      }
+
+      // 3. Calcular premio (10 monedas por nivel) y actualizar
+      const monedasGanadas = nivelesPorCobrar * 10;
+      const nuevoSaldo = (perfil.monedas || 0) + monedasGanadas;
+
+      await client.query(`
+        UPDATE public.profiles 
+        SET monedas = $1, ultimo_nivel_reclamado = $2 
+        WHERE id = $3;
+      `, [nuevoSaldo, nivelActual, userId]);
+
+      // 4. Registrar en el historial de auditoría
+      await client.query(`
+        INSERT INTO public.historial_gamificacion (user_id, origen_actividad, monedas_otorgadas, xp_otorgada)
+        VALUES ($1, 'recompensa_nivel', $2, 0);
+      `, [userId, monedasGanadas]);
+
+      await client.query('COMMIT');
+
+      return {
+        exito: true,
+        mensaje: `¡Has reclamado ${monedasGanadas} monedas por subir ${nivelesPorCobrar} nivel(es)!`,
+        monedas_ganadas: monedasGanadas,
+        nuevo_saldo: nuevoSaldo,
+        ultimo_nivel_reclamado: nivelActual
+      };
     } catch (error) {
       await client.query('ROLLBACK');
       throw error;

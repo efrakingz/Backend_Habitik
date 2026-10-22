@@ -1,4 +1,4 @@
-import { Response } from 'express';
+import { Request, Response } from 'express';
 import { RewardService } from '../services/rewardService';
 
 const rewardService = new RewardService();
@@ -178,6 +178,29 @@ export class RewardController {
       return res.status(200).json(result);
     } catch (error: any) {
       return res.status(400).json({ success: false, message: error.message });
+    }
+  }
+  // POST /niveles/reclamar
+  static async reclamarNivel(req: Request, res: Response) {
+    try {
+      // Prioriza el ID del token JWT (req.auth), pero acepta el del body para pruebas manuales
+      const userId = (req as any).auth?.user_id || req.body.user_id;
+
+      if (!userId) {
+        return res.status(400).json({ 
+          error: 'El id de usuario es requerido. Envía un token válido o user_id en el body.' 
+        });
+      }
+
+      const result = await RewardService.reclamarRecompensaNivel(userId);
+
+      if (!result.exito) {
+        return res.status(400).json(result);
+      }
+
+      return res.status(200).json(result);
+    } catch (error: any) {
+      return res.status(500).json({ error: error.message || 'Error al procesar el reclamo de nivel' });
     }
   }
 }

@@ -41,4 +41,8 @@ router.patch('/canjes/:id/aprobar', requireAdmin, rewardController.approve);
 // 11. Rechazar canje personal y reembolsar monedas (Solo Jefe de Hogar)
 router.patch('/canjes/:id/rechazar', requireAdmin, rewardController.reject);
 
+// 12. Reclamar recompensa por subir de nivel (ej: 10 monedas por nivel subido)
+router.post('/niveles/reclamar', RewardController.reclamarNivel);
+
+
 export default router;
