@@ -206,14 +206,14 @@ export class RewardService {
     }
   }
 
-  /**
+/**
    * 4. Obtener propuestas pendientes de la familia (Para el panel del Jefe)
    */
   async getPendingProposals(familyId: string) {
     const client = await pool.connect();
     try {
       const result = await client.query(`
-        SELECT r.id, r.family_id, r.titulo, r.descripcion, r.emoji AS icono, r.icono, r.es_familiar, r.costo, r.created_at, r.fecha_propuesta,
+        SELECT r.id, r.family_id, r.titulo, r.descripcion, r.emoji AS icono, r.es_familiar, r.costo, r.created_at, r.fecha_propuesta,
                p.id as usuario_id, p.nombre as usuario_nombre, p.avatar as usuario_avatar, p.monedas as usuario_monedas
         FROM public.family_rewards r
         JOIN public.profiles p ON r.propuesto_por = p.id
@@ -225,7 +225,6 @@ export class RewardService {
       client.release();
     }
   }
-
   /**
    * 5. Aprobar propuesta asignando el costo en monedas y modo (Solo Jefe de Hogar)
    * Permite editar el título, descripción, icono y transformarla en premio familiar colaborativo
