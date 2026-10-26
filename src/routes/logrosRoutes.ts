@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { obtenerLogros, reclamarLogro } from '../controllers/logrosController';
+import { obtenerLogros, reclamarLogroController } from '../controllers/logrosController';
 import { verifyToken } from '../middleware/auth'; // Ajusta la ruta de tu middleware si es distinta
 
 const router = Router();
@@ -8,6 +8,6 @@ const router = Router();
 router.get('/:userId', verifyToken, obtenerLogros);
 
 // POST /logros/reclamar -> Abona las monedas del logro al perfil
-router.post('/reclamar', verifyToken, reclamarLogro);
+router.post('/reclamar', verifyToken, reclamarLogroController);
 
 export default router;
