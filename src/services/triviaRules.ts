@@ -9,9 +9,11 @@ export const TRIVIA_TOTAL_LIMIT = 120;
 
 export function calcularXpRespuesta(segundos: number, correcta: boolean): number {
   if (!correcta || segundos > TRIVIA_TIME_LIMIT_SECONDS) return 0;
-  if (segundos < 10) return 60;
-  if (segundos <= 20) return 40;
-  return 20;
+  if (segundos <= 3) return 10;
+  if (segundos <= 11) return 9;
+  if (segundos <= 18) return 8;
+  if (segundos <= 26) return 7;
+  return 6;
 }
 
 export function calcularMonedasTrivia(correctas: number): number {

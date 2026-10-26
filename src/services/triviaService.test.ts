@@ -54,7 +54,7 @@ describe('TriviaService', () => {
     expect(client.query.mock.calls.some(([sql]) => String(sql).includes('INSERT INTO public.trivia_sessions'))).toBe(false);
   });
 
-  it.each([[9, 60], [10, 40], [21, 20], [31, 0]])('calcula %s segundos como %s XP', async (elapsed, expectedXp) => {
+  it.each([[3, 10], [4, 9], [12, 8], [19, 7], [27, 6], [31, 0]])('calcula %s segundos como %s XP', async (elapsed, expectedXp) => {
     const client = createClient((sql) => {
       if (sql.includes('FROM public.trivia_answers a')) return { rows: [] };
       if (sql.includes('GREATEST(0')) return { rows: [{

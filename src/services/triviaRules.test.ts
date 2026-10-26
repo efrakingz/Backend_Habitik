@@ -11,12 +11,16 @@ import {
 
 describe('reglas de trivia', () => {
   it.each([
-    [0, true, 60],
-    [9, true, 60],
-    [10, true, 40],
-    [20, true, 40],
-    [21, true, 20],
-    [30, true, 20],
+    [0, true, 10],
+    [3, true, 10],
+    [4, true, 9],
+    [11, true, 9],
+    [12, true, 8],
+    [18, true, 8],
+    [19, true, 7],
+    [26, true, 7],
+    [27, true, 6],
+    [30, true, 6],
     [31, true, 0],
     [5, false, 0],
   ])('calcula %s segundos y acierto %s como %s XP', (segundos, correcta, esperado) => {
