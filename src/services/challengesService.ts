@@ -6,11 +6,10 @@ export class ChallengesService {
   /**
    * HU 2.1: Finalizar Speedrun de la Ducha
    * Regla de negocio:
-   * - Menor a 3 minutos (180s): No se registra en BD (filtro anti-trampa).
-   * - De 3 a 5 min (180s - 300s): 200 XP, 2 monedas (tiempo óptimo ecológico).
+   * - Menor a 4 minutos (<240s): NO se guarda nada en BD.
+   * - De 4 a 5 min (240s - 300s): 200 XP, 2 monedas.
    * - De 5 a 8 min (301s - 480s): 100 XP, 1 moneda.
-   * - De 8 a 30 min (481s - 1800s): 50 XP, 0 monedas.
-   * - Mayor a 30 min (>1800s): 0 XP, 0 monedas (ducha excesiva registrada).
+   * - Mayor a 8 min (>480s): 50 XP, 0 monedas.
    */
   static async finalizarDucha(userId: string, familyId: string | null, tiempoSegundos: number): Promise<{
     log?: any;
@@ -26,21 +25,19 @@ export class ChallengesService {
     racha_dias?: number;
     mensaje?: string;
   }> {
-    if (tiempoSegundos < 180) {
+    if (tiempoSegundos < 240) {
       return {
         es_valido: false,
         guardado: false,
         tiempo_segundos: tiempoSegundos,
         xp_ganada: 0,
         monedas_ganadas: 0,
-        mensaje: 'La ducha fue menor a 3 minutos (180s). No se registró nada en la base de datos.'
+        mensaje: 'La ducha fue menor a 4 minutos (240s). No se registró nada en la base de datos.'
       };
     }
 
     let xp = 0;
     let monedas = 0;
-    let estado = 'valido';
-    let esValido = true;
 
     if (tiempoSegundos <= 300) {
       xp = 200;
@@ -48,15 +45,9 @@ export class ChallengesService {
     } else if (tiempoSegundos <= 480) {
       xp = 100;
       monedas = 1;
-    } else if (tiempoSegundos <= 1800) {
+    } else {
       xp = 50;
       monedas = 0;
-    } else {
-      // Ducha de más de 30 minutos: 0 XP
-      xp = 0;
-      monedas = 0;
-      estado = 'excesivo';
-      esValido = false;
     }
 
     const client = await pool.connect();
@@ -67,9 +58,9 @@ export class ChallengesService {
         INSERT INTO public.shower_logs (
           user_id, family_id, duracion_segundos, estado, es_valido, xp_otorgada, monedas_otorgadas
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        VALUES ($1, $2, $3, 'valido', true, $4, $5)
         RETURNING *;
-      `, [userId, familyId, tiempoSegundos, estado, esValido, xp, monedas]);
+      `, [userId, familyId, tiempoSegundos, xp, monedas]);
 
       const logInsertado = insertRes.rows[0];
 
@@ -82,19 +73,19 @@ export class ChallengesService {
       const totalXp = currentXp + xp;
       const saldoMonedas = (prof.rows[0].monedas || 0) + monedas;
 
-      // 1. PRIMERO actualizamos la XP y Monedas acumuladas en la tabla profiles
+      // 1. Actualizamos la XP y Monedas acumuladas en profiles
       await client.query(`
         UPDATE public.profiles
         SET xp = $1, monedas = $2
         WHERE id = $3;
       `, [totalXp, saldoMonedas, userId]);
 
-      // 2. DESPUÉS consultamos el nuevo nivel para que la función SQL lea la XP ya actualizada
+      // 2. Consultamos el nuevo nivel recalculado desde PostgreSQL
       const nivelRes = await client.query(`SELECT public.obtener_nivel_usuario($1) AS nuevo_nivel;`, [userId]);
       const nuevoNivel = nivelRes.rows[0]?.nuevo_nivel || Math.min(99, Math.floor(totalXp / 500) + 1);
       const levelUp = nuevoNivel > currentNivel;
 
-      // 3. Guardamos el nivel resultante en la columna de soporte
+      // 3. Guardamos el nivel resultante
       await client.query(`
         UPDATE public.profiles
         SET nivel = $1
@@ -108,8 +99,37 @@ export class ChallengesService {
         VALUES ($1, 'speedrun_ducha', $2, $3);
       `, [userId, monedas, xp]);
 
-      // 🏆 DISPARADOR DE LOGROS: Otorga automáticamente el logro correcto 'PRIMERA_DUCHA'
+      // 🏆 DISPARADORES DE LOGROS AUTOMÁTICOS (Speedrun de la Ducha)
       await LogrosService.otorgarLogroSiAplica(userId, 'PRIMERA_DUCHA', client);
+
+      if (tiempoSegundos <= 240) {
+        await LogrosService.otorgarLogroSiAplica(userId, 'DUCHA_FLASH', client);
+      }
+
+      // Logro acumulativo: 5 duchas válidas
+      const conteoDuchasRes = await client.query(`
+        SELECT COUNT(*) AS total 
+        FROM public.shower_logs 
+        WHERE user_id = $1 AND es_valido = TRUE;
+      `, [userId]);
+      const totalDuchas = parseInt(conteoDuchasRes.rows[0]?.total || '0', 10);
+
+      if (totalDuchas >= 5) {
+        await LogrosService.otorgarLogroSiAplica(userId, 'MEDALLA_DUCHA_BRONCE', client);
+      }
+
+      // Logros por Rachas Consecutivas
+      if (streak.racha_dias >= 3) {
+        await LogrosService.otorgarLogroSiAplica(userId, 'RACHA_3', client);
+      }
+      if (streak.racha_dias >= 7) {
+        await LogrosService.otorgarLogroSiAplica(userId, 'RACHA_7', client);
+      }
+
+      // Logro por acumulado de monedas
+      if (saldoMonedas >= 100) {
+        await LogrosService.otorgarLogroSiAplica(userId, 'BILLETERA_ECO', client);
+      }
 
       await client.query('COMMIT');
 
@@ -156,7 +176,7 @@ export class ChallengesService {
       const saldoMonedas = (prof.rows[0].monedas || 0) + monedas;
       const currentNivel = prof.rows[0].nivel || 1;
 
-      // 1. Actualizamos la XP acumulada
+      // 1. Actualizamos XP y Monedas acumuladas
       await client.query(`
         UPDATE public.profiles
         SET xp = $1, monedas = $2
@@ -182,9 +202,35 @@ export class ChallengesService {
         VALUES ($1, 'eco_puzzle', $2, $3);
       `, [userId, monedas, xp]);
 
-      // 🏆 DISPARADOR DE LOGROS: Otorga 'MAESTRO_ECO' si completó el puzzle sin errores
+      // 🏆 DISPARADORES DE LOGROS AUTOMÁTICOS (Eco-Puzzle)
       if (errores === 0) {
         await LogrosService.otorgarLogroSiAplica(userId, 'MAESTRO_ECO', client);
+        await LogrosService.otorgarLogroSiAplica(userId, 'RECICLADOR_PERFECTO', client);
+
+        // Conteo acumulativo de puzzles sin errores
+        const conteoPuzzleRes = await client.query(`
+          SELECT COUNT(*) AS total 
+          FROM public.historial_gamificacion 
+          WHERE user_id = $1 AND origen_actividad = 'eco_puzzle';
+        `, [userId]);
+        const totalPuzzlesPerfectos = parseInt(conteoPuzzleRes.rows[0]?.total || '0', 10);
+
+        if (totalPuzzlesPerfectos >= 10) {
+          await LogrosService.otorgarLogroSiAplica(userId, 'MEDALLA_PUZZLE_ORO', client);
+        }
+      }
+
+      // Logros por Rachas Consecutivas
+      if (streak.racha_dias >= 3) {
+        await LogrosService.otorgarLogroSiAplica(userId, 'RACHA_3', client);
+      }
+      if (streak.racha_dias >= 7) {
+        await LogrosService.otorgarLogroSiAplica(userId, 'RACHA_7', client);
+      }
+
+      // Logro por acumulado de monedas
+      if (saldoMonedas >= 100) {
+        await LogrosService.otorgarLogroSiAplica(userId, 'BILLETERA_ECO', client);
       }
 
       await client.query('COMMIT');
@@ -245,7 +291,6 @@ export class ChallengesService {
       const totalXp = (prof.rows[0].xp || 0) + 30;
       const saldoMonedas = (prof.rows[0].monedas || 0) + 5;
 
-      // Actualizamos XP primero
       await client.query(`
         UPDATE public.profiles
         SET xp = $1, monedas = $2
@@ -265,6 +310,10 @@ export class ChallengesService {
         INSERT INTO public.historial_gamificacion (user_id, origen_actividad, monedas_otorgadas, xp_otorgada)
         VALUES ($1, 'bonus_constancia', 5, 30);
       `, [userId]);
+
+      if (saldoMonedas >= 100) {
+        await LogrosService.otorgarLogroSiAplica(userId, 'BILLETERA_ECO', client);
+      }
 
       await client.query('COMMIT');
       return { activado: true, xp_bonus: 30, monedas_bonus: 5, total_xp: totalXp, saldo_monedas: saldoMonedas, nivel_actual: nuevoNivel };
@@ -290,7 +339,6 @@ export class ChallengesService {
       const p = res.rows[0];
       const xpTotal = p.xp || 0;
 
-      // Obtener nivel dinámicamente desde la función SQL algorítmica
       const nivelRes = await client.query(`SELECT public.obtener_nivel_usuario($1) AS nivel;`, [userId]);
       const nivelActual = nivelRes.rows[0]?.nivel || Math.min(99, Math.floor(xpTotal / 500) + 1);
 

@@ -1,5 +1,6 @@
 import { pool } from '../config/db';
 import { broadcastFamilyLiveEvent } from '../utils/eventBroadcaster';
+import { LogrosService } from './logrosService';
 
 export class RewardService {
   
@@ -675,7 +676,8 @@ export class RewardService {
           });
         }
       }
-
+      await LogrosService.otorgarLogroSiAplica(userId, 'MEDALLA_FAMILIA', client);
+      await LogrosService.otorgarLogroSiAplica(userId, 'ESPIRITU_FAMILIAR', client);
       await client.query('COMMIT');
 
       return {
