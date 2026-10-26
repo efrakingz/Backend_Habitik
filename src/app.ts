@@ -3,6 +3,7 @@ import express from 'express';
 import { getPerfil } from './controllers/authController';
 import { verifyToken } from './middleware/auth';
 import authRoutes from './routes/authRoutes';
+import billsRoutes from './routes/billsRoutes';
 import ecoRoutes from './routes/ecoRoutes';
 import familyRoutes from './routes/familyRoutes';
 import logrosRoutes from './routes/logrosRoutes';
@@ -28,6 +29,7 @@ app.use('/eco', ecoRoutes);
 app.use('/rewards', rewardRoutes);
 app.use('/logros', logrosRoutes);
 app.use('/trivia', triviaRoutes);
+app.use('/bills', billsRoutes);
 app.use('/wordle', wordleRoutes);
 app.use('/notifications', notificationRoutes);
 app.use('/api', notificationRoutes);
@@ -48,6 +50,7 @@ app.get('/', (_req, res) => {
         ecoPuzzle: 'POST /eco/completar',
         trivia: 'POST /trivia/iniciar',
         triviaQuestion: 'GET /trivia/pregunta?sesion_id=<uuid>',
+        bills: 'GET/POST/DELETE /bills',
         wordle: 'GET/POST /wordle',
         rewards: 'GET/POST /rewards',
         redeem: 'POST /rewards/:id/canjear',
