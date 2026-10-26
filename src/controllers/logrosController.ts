@@ -16,22 +16,25 @@ export const obtenerLogros = async (req: Request, res: Response): Promise<void> 
   }
 };
 
-export const reclamarLogro = async (req: Request, res: Response): Promise<void> => {
+export const reclamarLogroController = async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).user?.id || req.body.user_id;
-    const { logroId } = req.body;
+    const userId = (req as any).auth?.user_id || (req as any).auth?.id || (req as any).user?.id || req.body.user_id;
+    const logroId = req.body.logroId || req.body.logro_id;
+
+    if (!userId) {
+      return res.status(401).json({ message: 'Usuario no autenticado.' });
+    }
 
     if (!logroId) {
-      res.status(400).json({ message: 'El campo logroId es obligatorio.' });
-      return;
+      return res.status(400).json({ message: 'El campo logroId es obligatorio.' });
     }
 
     const resultado = await LogrosService.reclamarRecompensa(userId, logroId);
-    res.status(200).json({
-      message: 'Recompensa de logro reclamada exitosamente.',
+    return res.status(200).json({
+      message: 'Monedas de logro otorgadas con éxito.',
       data: resultado
     });
   } catch (error: any) {
-    res.status(400).json({ message: error.message });
+    return res.status(400).json({ message: error.message });
   }
 };
