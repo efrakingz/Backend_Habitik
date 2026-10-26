@@ -28,9 +28,10 @@ export class ShowerService {
       }
 
       // Crear nuevo registro de inicio
+      // En src/services/showerService.ts (dentro del método startShower)
       const insertRes = await client.query(`
-        INSERT INTO public.shower_logs (user_id, estado, es_valido, iniciado_en)
-        VALUES ($1, 'en_proceso', FALSE, CURRENT_TIMESTAMP)
+        INSERT INTO public.shower_logs (user_id, duracion_segundos, estado, es_valido, iniciado_en)
+        VALUES ($1, 0, 'en_proceso', FALSE, CURRENT_TIMESTAMP)
         RETURNING id, iniciado_en;
       `, [userId]);
 

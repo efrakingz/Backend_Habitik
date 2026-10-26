@@ -3,12 +3,11 @@ import { ShowerService } from '../services/showerService';
 import { StreakService } from '../services/streakService';
 
 const showerService = new ShowerService();
-
 export const iniciarDucha = async (req: Request, res: Response): Promise<void> => {
-  const userId = (req as any).auth?.user_id || req.body.user_id;
+  const userId = (req as any).auth?.user_id || (req as any).auth?.id || (req as any).user?.id || req.body.user_id;
 
   if (!userId) {
-    res.status(401).json({ message: 'No autenticado o user_id faltante.' });
+    res.status(401).json({ success: false, message: 'No autenticado o user_id faltante.' });
     return;
   }
 
@@ -21,7 +20,11 @@ export const iniciarDucha = async (req: Request, res: Response): Promise<void> =
     });
   } catch (error: any) {
     console.error('[showerController.iniciarDucha]', error);
-    res.status(500).json({ success: false, message: 'Error interno al iniciar la ducha.' });
+    res.status(500).json({ 
+      success: false, 
+      message: 'Error interno al iniciar la ducha.',
+      error: error.message || error 
+    });
   }
 };
 
