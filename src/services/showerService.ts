@@ -1,185 +1,218 @@
-import { ShowerRepository } from '../repositories/showerRepository';
-import { query, pool } from '../config/db';
-
-const showerRepository = new ShowerRepository();
+import { pool } from '../config/db';
+import { StreakService } from './streakService';
+import { LogrosService } from './logrosService';
 
 export class ShowerService {
   /**
-   * Momento 1: Inicia la ducha (1ª Notificación).
-   * Registra el inicio utilizando la hora exacta del servidor para evitar manipulaciones en el frontend.
+   * Momento 1: Iniciar ducha en el servidor
    */
   async startShower(userId: string) {
-    try {
-      await query(`
-        CREATE TABLE IF NOT EXISTS public.shower_logs (
-          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-          user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
-          duracion_segundos INTEGER NOT NULL DEFAULT 0,
-          estado VARCHAR(50) NOT NULL,
-          metadata JSONB DEFAULT '{}'::jsonb,
-          created_at TIMESTAMPTZ DEFAULT NOW(),
-          iniciado_en TIMESTAMPTZ,
-          finalizado_en TIMESTAMPTZ
-        )
-      `);
-      await query(`ALTER TABLE public.shower_logs ADD COLUMN IF NOT EXISTS iniciado_en TIMESTAMPTZ;`);
-      await query(`ALTER TABLE public.shower_logs ADD COLUMN IF NOT EXISTS finalizado_en TIMESTAMPTZ;`);
-    } catch (e) {
-      // Ignorar si ya existen
-    }
-
     const client = await pool.connect();
     try {
-      const insertQuery = `
-        INSERT INTO public.shower_logs (user_id, duracion_segundos, estado, iniciado_en, created_at)
-        VALUES ($1, 0, 'en_proceso', NOW(), NOW())
+      await client.query('BEGIN');
+
+      // Buscar si ya existe una ducha en proceso
+      const activeRes = await client.query(`
+        SELECT id, iniciado_en FROM public.shower_logs
+        WHERE user_id = $1 AND estado = 'en_proceso'
+        ORDER BY iniciado_en DESC LIMIT 1;
+      `, [userId]);
+
+      if (activeRes.rows.length > 0) {
+        await client.query('COMMIT');
+        return {
+          id: activeRes.rows[0].id,
+          iniciado_en: activeRes.rows[0].iniciado_en,
+          mensaje: 'Ya tenías una ducha activa en curso.'
+        };
+      }
+
+      // Crear nuevo registro de inicio
+      const insertRes = await client.query(`
+        INSERT INTO public.shower_logs (user_id, estado, es_valido, iniciado_en)
+        VALUES ($1, 'en_proceso', FALSE, CURRENT_TIMESTAMP)
         RETURNING id, iniciado_en;
-      `;
-      const res = await client.query(insertQuery, [userId]);
-      return res.rows[0];
+      `, [userId]);
+
+      await client.query('COMMIT');
+      return insertRes.rows[0];
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
     } finally {
       client.release();
     }
   }
 
   /**
-   * Momento 2: Finaliza la ducha (2ª Notificación).
-   * El backend MIDE y CALCULA el tiempo real transcurrido, aplica validaciones y otorga recompensas.
+   * Momento 2: Finalizar ducha, calcular recompensas y disparar logros automáticamente
    */
-  async finishShower(userId: string) {
+  async finishShower(userId: string, duracionSegundosManual?: number) {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
 
-      // 1. Buscar la ducha activa del usuario en estado 'en_proceso'
-      const activeRes = await client.query(`
-        SELECT id, iniciado_en 
-        FROM public.shower_logs 
-        WHERE user_id = $1 AND estado = 'en_proceso' 
-        ORDER BY created_at DESC 
-        LIMIT 1 
+      // 1. Obtener la ducha en proceso
+      const showerRes = await client.query(`
+        SELECT id, iniciado_en FROM public.shower_logs
+        WHERE user_id = $1 AND estado = 'en_proceso'
+        ORDER BY iniciado_en DESC LIMIT 1
         FOR UPDATE;
       `, [userId]);
 
-      if (activeRes.rows.length === 0) {
+      let showerLogId: string | null = null;
+      let duracionSegundos = duracionSegundosManual || 0;
+
+      if (showerRes.rows.length > 0) {
+        showerLogId = showerRes.rows[0].id;
+        const iniciadoEn = new Date(showerRes.rows[0].iniciado_en).getTime();
+        const ahora = Date.now();
+        duracionSegundos = Math.floor((ahora - iniciadoEn) / 1000);
+      } else if (!duracionSegundosManual) {
         throw new Error('No hay ninguna ducha activa registrada para finalizar.');
       }
 
-      const { id: logId, iniciado_en } = activeRes.rows[0];
-      const startTimestamp = iniciado_en || new Date();
-
-      // 2. EL BACKEND CALCULA EL TIEMPO real transcurrido mediante la diferencia matemática en PostgreSQL
-      const calcRes = await client.query(`
-        SELECT EXTRACT(EPOCH FROM (NOW() - $1::timestamptz))::integer AS duracion
-      `, [startTimestamp]);
-
-      const duracionSegundos = Math.max(0, calcRes.rows[0].duracion);
-
-      // Validación anti-trampa en el backend (< 3 minutos = 180 segundos es inválido)
-      const esValido = duracionSegundos >= 180;
-      const estado = esValido ? 'valido' : 'invalido';
-
-      // 3. Consultar perfil actual del usuario para gamificación
-      const profileQuery = `
-        SELECT family_id, xp, nivel, monedas, onboarding_answers 
-        FROM public.profiles 
-        WHERE id = $1 FOR UPDATE;
-      `;
-      const profileRes = await client.query(profileQuery, [userId]);
-      const profile = profileRes.rows[0];
-
-      if (!profile) {
-        throw new Error('Perfil de usuario no encontrado.');
-      }
-
-      let xpGanada = 0;
-      let monedasGanadas = 0;
-
-      // Asignación de recompensas escalonadas si la ducha es válida
-      if (esValido) {
-        if (duracionSegundos <= 300) {
-          xpGanada = 200;
-          monedasGanadas = 2;
-        } else if (duracionSegundos <= 480) {
-          xpGanada = 100;
-          monedasGanadas = 1;
-        } else {
-          xpGanada = 50;
-          monedasGanadas = 0;
+      // 2. Reglas de Negocio del Backend (< 240s = no válido)
+      if (duracionSegundos < 240) {
+        if (showerLogId) {
+          await client.query(`
+            UPDATE public.shower_logs
+            SET estado = 'invalido', es_valido = FALSE, duracion_segundos = $1, finalizado_en = CURRENT_TIMESTAMP
+            WHERE id = $2;
+          `, [duracionSegundos, showerLogId]);
         }
-      }
+        await client.query('COMMIT');
 
-      let levelUp = false;
-      let nuevoNivel = profile.nivel || 1;
-      let xpTotal = profile.xp || 0;
-      let saldoMonedas = profile.monedas || 0;
-
-      if (esValido && (xpGanada > 0 || monedasGanadas > 0)) {
-        xpTotal += xpGanada;
-        saldoMonedas += monedasGanadas;
-
-        // Fórmula de Nivel: floor(XP / 500) + 1
-        nuevoNivel = Math.floor(xpTotal / 500) + 1;
-        if (nuevoNivel > (profile.nivel || 1)) {
-          levelUp = true;
-        }
-
-        // Registrar 'speedrun_ducha' en el objeto JSONB onboarding_answers para el bonus diario
-        const todayStr = new Date().toISOString().split('T')[0];
-        const onboardingAnswers = profile.onboarding_answers || {};
-        const dailyTracking = onboardingAnswers.daily_tracking || {};
-        const todayChallenges: string[] = dailyTracking[todayStr] || [];
-
-        if (!todayChallenges.includes('speedrun_ducha')) {
-          todayChallenges.push('speedrun_ducha');
-        }
-
-        const updatedOnboarding = {
-          ...onboardingAnswers,
-          daily_tracking: {
-            ...dailyTracking,
-            [todayStr]: todayChallenges
+        return {
+          recompensas: {
+            es_valido: false,
+            tiempo_segundos: duracionSegundos,
+            xp_ganada: 0,
+            monedas_ganadas: 0
           }
         };
-
-        // Actualizar Perfil en PostgreSQL
-        const updateProfileQuery = `
-          UPDATE public.profiles
-          SET xp = $1, nivel = $2, monedas = $3, onboarding_answers = $4, ultima_actividad = CURRENT_DATE
-          WHERE id = $5;
-        `;
-        await client.query(updateProfileQuery, [
-          xpTotal,
-          nuevoNivel,
-          saldoMonedas,
-          JSON.stringify(updatedOnboarding),
-          userId
-        ]);
       }
 
-      // 4. Actualizar el log de ducha con la duración medida y calculada por el backend
-      const updateLogQuery = `
-        UPDATE public.shower_logs
-        SET duracion_segundos = $1, estado = $2, finalizado_en = NOW()
-        WHERE id = $3
-        RETURNING *;
-      `;
-      const logRes = await client.query(updateLogQuery, [duracionSegundos, estado, logId]);
-      const log = logRes.rows[0];
+      // 3. Escala de recompensas
+      let xp = 0;
+      let monedas = 0;
+
+      if (duracionSegundos <= 300) {
+        xp = 200;
+        monedas = 2;
+      } else if (duracionSegundos <= 480) {
+        xp = 100;
+        monedas = 1;
+      } else {
+        xp = 50;
+        monedas = 0;
+      }
+
+      // 4. Actualizar saldo del perfil
+      const prof = await client.query(`
+        SELECT xp, monedas, nivel FROM public.profiles WHERE id = $1 FOR UPDATE;
+      `, [userId]);
+
+      if (prof.rows.length === 0) throw new Error('Perfil no encontrado.');
+
+      const currentXp = prof.rows[0].xp || 0;
+      const currentNivel = prof.rows[0].nivel || 1;
+      const totalXp = currentXp + xp;
+      const saldoMonedas = (prof.rows[0].monedas || 0) + monedas;
+
+      await client.query(`
+        UPDATE public.profiles
+        SET xp = $1, monedas = $2
+        WHERE id = $3;
+      `, [totalXp, saldoMonedas, userId]);
+
+      // 5. Recalcular nivel dinámico mediante SQL
+      const nivelRes = await client.query(`SELECT public.obtener_nivel_usuario($1) AS nuevo_nivel;`, [userId]);
+      const nuevoNivel = nivelRes.rows[0]?.nuevo_nivel || Math.min(99, Math.floor(totalXp / 500) + 1);
+      const levelUp = nuevoNivel > currentNivel;
+
+      await client.query(`
+        UPDATE public.profiles
+        SET nivel = $1
+        WHERE id = $2;
+      `, [nuevoNivel, userId]);
+
+      // 6. Actualizar registro en shower_logs e historial
+      let logActualizado = null;
+      if (showerLogId) {
+        const updateLogRes = await client.query(`
+          UPDATE public.shower_logs
+          SET 
+            duracion_segundos = $1,
+            estado = 'valido',
+            es_valido = TRUE,
+            xp_otorgada = $2,
+            monedas_otorgadas = $3,
+            finalizado_en = CURRENT_TIMESTAMP
+          WHERE id = $4
+          RETURNING *;
+        `, [duracionSegundos, xp, monedas, showerLogId]);
+        logActualizado = updateLogRes.rows[0];
+      } else {
+        const insertLogRes = await client.query(`
+          INSERT INTO public.shower_logs (user_id, duracion_segundos, estado, es_valido, xp_otorgada, monedas_otorgadas, finalizado_en)
+          VALUES ($1, $2, 'valido', TRUE, $3, $4, CURRENT_TIMESTAMP)
+          RETURNING *;
+        `, [userId, duracionSegundos, xp, monedas]);
+        logActualizado = insertLogRes.rows[0];
+      }
+
+      const streak = await StreakService.actualizarRachaDiaria(client, userId);
+
+      await client.query(`
+        INSERT INTO public.historial_gamificacion (user_id, origen_actividad, monedas_otorgadas, xp_otorgada)
+        VALUES ($1, 'speedrun_ducha', $2, $3);
+      `, [userId, monedas, xp]);
+
+      // 7. 🏆 DISPARADORES DE LOGROS AUTOMÁTICOS
+      await LogrosService.otorgarLogroSiAplica(userId, 'PRIMERA_DUCHA', client);
+
+      if (duracionSegundos <= 240) {
+        await LogrosService.otorgarLogroSiAplica(userId, 'DUCHA_FLASH', client);
+      }
+
+      // Conteo acumulativo de duchas válidas
+      const conteoDuchasRes = await client.query(`
+        SELECT COUNT(*) AS total 
+        FROM public.shower_logs 
+        WHERE user_id = $1 AND es_valido = TRUE;
+      `, [userId]);
+      const totalDuchas = parseInt(conteoDuchasRes.rows[0]?.total || '0', 10);
+
+      if (totalDuchas >= 5) {
+        await LogrosService.otorgarLogroSiAplica(userId, 'MEDALLA_DUCHA_BRONCE', client);
+      }
+
+      if (streak.racha_dias >= 3) {
+        await LogrosService.otorgarLogroSiAplica(userId, 'RACHA_3', client);
+      }
+      if (streak.racha_dias >= 7) {
+        await LogrosService.otorgarLogroSiAplica(userId, 'RACHA_7', client);
+      }
+
+      if (saldoMonedas >= 100) {
+        await LogrosService.otorgarLogroSiAplica(userId, 'BILLETERA_ECO', client);
+      }
 
       await client.query('COMMIT');
 
       return {
-        log,
+        log: logActualizado,
         recompensas: {
-          es_valido: esValido,
+          es_valido: true,
           tiempo_segundos: duracionSegundos,
-          xp_ganada: xpGanada,
-          monedas_ganadas: monedasGanadas,
-          total_xp: xpTotal,
+          xp_ganada: xp,
+          monedas_ganadas: monedas,
+          total_xp: totalXp,
           saldo_monedas: saldoMonedas,
           nivel_actual: nuevoNivel,
-          level_up: levelUp
+          level_up: levelUp,
+          racha_dias: streak.racha_dias
         }
       };
     } catch (error) {
