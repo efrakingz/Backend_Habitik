@@ -35,6 +35,8 @@ app.use('/wordle', wordleRoutes);
 app.use('/notifications', notificationRoutes);
 app.use('/api', notificationRoutes);
 app.use('/feed', feedRoutes);
+app.use('/api/feed', feedRoutes);
+app.use('/api/familia/feed', feedRoutes);
 
 app.get('/', (_req, res) => {
   res.json({

@@ -319,3 +319,21 @@ CREATE INDEX IF NOT EXISTS idx_evidences_media_gin ON public.evidences USING GIN
 CREATE INDEX IF NOT EXISTS idx_family_rewards_metadata_gin ON public.family_rewards USING GIN (metadata);
 CREATE INDEX IF NOT EXISTS idx_reto_validations_evidencias_gin ON public.reto_validations USING GIN (evidencias);
 CREATE INDEX IF NOT EXISTS idx_notifications_payload_gin ON public.notifications USING GIN (payload);
+
+-- ------------------------------------------------------------
+-- Tabla: public.feed_reacciones (HU 4.1 Muro Social Familiar)
+-- ------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.feed_reacciones (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    feed_id VARCHAR(100) NOT NULL,
+    family_id UUID NOT NULL REFERENCES public.families(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+    tipo_reaccion VARCHAR(30) NOT NULL DEFAULT 'like',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT unique_user_feed_reaccion UNIQUE (feed_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_feed_reacciones_feed_id ON public.feed_reacciones(feed_id);
+CREATE INDEX IF NOT EXISTS idx_feed_reacciones_family_id ON public.feed_reacciones(family_id);
+CREATE INDEX IF NOT EXISTS idx_feed_reacciones_user_id ON public.feed_reacciones(user_id);
+
