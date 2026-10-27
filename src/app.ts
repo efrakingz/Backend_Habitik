@@ -13,6 +13,7 @@ import rewardRoutes from './routes/rewardRoutes';
 import showerRoutes from './routes/showerRoutes';
 import triviaRoutes from './routes/triviaRoutes';
 import wordleRoutes from './routes/wordleRoutes';
+import feedRoutes from './routes/feedRoutes';
 
 const app = express();
 
@@ -33,6 +34,7 @@ app.use('/bills', billsRoutes);
 app.use('/wordle', wordleRoutes);
 app.use('/notifications', notificationRoutes);
 app.use('/api', notificationRoutes);
+app.use('/feed', feedRoutes);
 
 app.get('/', (_req, res) => {
   res.json({
