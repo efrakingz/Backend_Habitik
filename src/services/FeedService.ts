@@ -12,7 +12,6 @@ export class FeedService {
           hg.id,
           hg.user_id,
           p.nombre,
-          p.metadata->>'avatar' AS avatar,
           hg.origen_actividad,
           hg.xp_otorgada,
           hg.monedas_otorgadas,
@@ -25,14 +24,13 @@ export class FeedService {
       `;
       const result = await client.query(query, [familyId, limit]);
 
-      // Mapear los datos para generar el texto descriptivo del feed
       return result.rows.map(row => ({
         id: row.id,
         user_id: row.user_id,
-        nombre: row.nombre,
-        avatar: row.avatar,
+        nombre: row.nombre || 'Familiar',
+        avatar: null,
         tipo: row.origen_actividad,
-        mensaje: FeedService.generarMensajeFeed(row.nombre, row.origen_actividad),
+        mensaje: FeedService.generarMensajeFeed(row.nombre || 'Familiar', row.origen_actividad),
         recompensas: {
           xp: row.xp_otorgada,
           monedas: row.monedas_otorgadas
