@@ -2,9 +2,9 @@ import { pool } from '../config/db';
 
 export class FeedService {
   /**
-   * Obtiene el feed unificado con las actividades de TODOS los miembros de la familia.
+   * Obtiene el feed unificado de actividades de TODOS los integrantes de la familia.
    */
-  static async obtenerFeedFamiliar(familyId: string, limit: number = 20) {
+  static async obtenerFeedFamiliar(familyId: string, limit: number = 30) {
     const client = await pool.connect();
     try {
       const query = `
@@ -14,6 +14,9 @@ export class FeedService {
           nombre,
           origen_actividad,
           mensaje,
+          imagen_url,
+          xp_otorgada,
+          monedas_otorgadas,
           created_at
         FROM (
           -- 1. Speedrun de Duchas
@@ -22,7 +25,10 @@ export class FeedService {
             sl.user_id,
             COALESCE(p.nombre, 'Familiar') AS nombre,
             'speedrun_ducha' AS origen_actividad,
-            CONCAT(COALESCE(p.nombre, 'Un familiar'), ' completó el Speedrun de la Ducha.') AS mensaje,
+            CONCAT(COALESCE(p.nombre, 'Un familiar'), ' completó el Speedrun de la Ducha en ', FLOOR(sl.duracion_segundos / 60), 'm ', (sl.duracion_segundos % 60), 's.') AS mensaje,
+            NULL::text AS imagen_url,
+            COALESCE(sl.xp_otorgada, 0) AS xp_otorgada,
+            COALESCE(sl.monedas_otorgadas, 0) AS monedas_otorgadas,
             sl.finalizado_en AS created_at
           FROM public.shower_logs sl
           JOIN public.profiles p ON sl.user_id = p.id
@@ -39,6 +45,9 @@ export class FeedService {
             COALESCE(p.nombre, 'Familiar') AS nombre,
             'logro' AS origen_actividad,
             CONCAT(COALESCE(p.nombre, 'Un familiar'), ' desbloqueó la medalla "', l.titulo, '".') AS mensaje,
+            NULL::text AS imagen_url,
+            0 AS xp_otorgada,
+            l.monedas_recompensa AS monedas_otorgadas,
             ul.fecha_desbloqueo AS created_at
           FROM public.usuario_logros ul
           JOIN public.profiles p ON ul.user_id = p.id
@@ -55,6 +64,9 @@ export class FeedService {
             COALESCE(p.nombre, 'Familiar') AS nombre,
             'canje' AS origen_actividad,
             CONCAT(COALESCE(p.nombre, 'Un familiar'), ' canjeó el premio "', fr.titulo, '".') AS mensaje,
+            NULL::text AS imagen_url,
+            0 AS xp_otorgada,
+            0 AS monedas_otorgadas,
             c.created_at AS created_at
           FROM public.canjes c
           JOIN public.profiles p ON c.user_id = p.id
@@ -63,7 +75,25 @@ export class FeedService {
 
           UNION ALL
 
-          -- 4. Eco-Puzzles y Subidas de Nivel (Historial Gamificación)
+          -- 4. Validaciones de Retos con Fotos / Evidencias (Cazador de Sombras)
+          SELECT 
+            rv.id::text AS id,
+            rv.user_id,
+            COALESCE(p.nombre, 'Familiar') AS nombre,
+            'reto_evidencia' AS origen_actividad,
+            CONCAT(COALESCE(p.nombre, 'Un familiar'), ' completó el reto "', COALESCE(rv.reto, 'Reto Ecológico'), '".') AS mensaje,
+            rv.evidencias->>0 AS imagen_url,
+            COALESCE(rv.xp, 0) AS xp_otorgada,
+            COALESCE(rv.monedas, 0) AS monedas_otorgadas,
+            rv.created_at AS created_at
+          FROM public.reto_validations rv
+          JOIN public.profiles p ON rv.user_id = p.id
+          WHERE p.family_id::text = $1::text 
+            AND rv.estado = 'aprobado'
+
+          UNION ALL
+
+          -- 5. Actividades Generales (Eco-Puzzle, Wordle, Bonus Constancia, Subida de Nivel)
           SELECT 
             hg.id::text AS id,
             hg.user_id,
@@ -72,15 +102,22 @@ export class FeedService {
             CASE 
               WHEN hg.origen_actividad = 'eco_puzzle' 
                 THEN CONCAT(COALESCE(p.nombre, 'Un familiar'), ' armó el Eco-Puzzle con éxito.')
+              WHEN hg.origen_actividad = 'wordle' 
+                THEN CONCAT(COALESCE(p.nombre, 'Un familiar'), ' adivinó la palabra en Eco-Wordle.')
+              WHEN hg.origen_actividad = 'bonus_constancia' 
+                THEN CONCAT(COALESCE(p.nombre, 'Un familiar'), ' obtuvo el Bonus de Constancia Diaria.')
               WHEN hg.origen_actividad = 'recompensa_nivel' 
                 THEN CONCAT(COALESCE(p.nombre, 'Un familiar'), ' subió de nivel.')
               ELSE CONCAT(COALESCE(p.nombre, 'Un familiar'), ' completó una actividad.')
             END AS mensaje,
+            NULL::text AS imagen_url,
+            COALESCE(hg.xp_otorgada, 0) AS xp_otorgada,
+            COALESCE(hg.monedas_otorgadas, 0) AS monedas_otorgadas,
             hg.created_at AS created_at
           FROM public.historial_gamificacion hg
           JOIN public.profiles p ON hg.user_id = p.id
           WHERE p.family_id::text = $1::text 
-            AND hg.origen_actividad NOT IN ('speedrun_ducha', 'logro')
+            AND hg.origen_actividad NOT IN ('speedrun_ducha', 'logro', 'canje')
         ) feed_unificado
         ORDER BY created_at DESC
         LIMIT $2;
@@ -95,6 +132,11 @@ export class FeedService {
         avatar: null,
         tipo: row.origen_actividad,
         mensaje: row.mensaje,
+        imagen_url: row.imagen_url || null,
+        recompensas: {
+          xp: row.xp_otorgada,
+          monedas: row.monedas_otorgadas
+        },
         fecha: row.created_at
       }));
     } finally {
