@@ -11,6 +11,31 @@ export class NotificationService {
   }
 
   /**
+   * Método estático invocado por servicios como InspeccionService
+   */
+  static async sendFamilyPushNotification(
+    familyId: string,
+    senderId: string,
+    title: string,
+    body: string,
+    dataPayload?: Record<string, any> | null,
+    io?: SocketIOServer | null
+  ): Promise<AppNotification> {
+    const instance = new NotificationService();
+    return await instance.sendFamilyEvent(
+      {
+        family_id: familyId,
+        sender_id: senderId,
+        title,
+        desc_text: body,
+        type: dataPayload?.type || 'NOTIFICACION_FAMILIAR',
+        payload: dataPayload,
+      },
+      io
+    );
+  }
+
+  /**
    * Envía un evento familiar, lo guarda en la base de datos y lo transmite por WebSockets
    */
   async sendFamilyEvent(
@@ -43,7 +68,7 @@ export class NotificationService {
       creado_en: saved.created_at || new Date(),
     };
 
-    // Emisión en tiempo real vía Socket.io para clientes activos / en segundo plano con deduplicación
+    // Emisión en tiempo real vía Socket.io para clientes activos
     if (io && saved.family_id) {
       broadcastFamilyLiveEvent(io, saved.family_id, eventPayload);
     }
