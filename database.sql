@@ -337,3 +337,20 @@ CREATE INDEX IF NOT EXISTS idx_feed_reacciones_feed_id ON public.feed_reacciones
 CREATE INDEX IF NOT EXISTS idx_feed_reacciones_family_id ON public.feed_reacciones(family_id);
 CREATE INDEX IF NOT EXISTS idx_feed_reacciones_user_id ON public.feed_reacciones(user_id);
 
+-- ------------------------------------------------------------
+-- Tabla: public.password_reset_codes (Recuperación y Verificación OTP)
+-- ------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.password_reset_codes (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    email VARCHAR(255) NOT NULL,
+    code VARCHAR(20) NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL,
+    used BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_password_reset_email ON public.password_reset_codes (email);
+CREATE INDEX IF NOT EXISTS idx_password_reset_code ON public.password_reset_codes (code);
+CREATE INDEX IF NOT EXISTS idx_password_reset_active ON public.password_reset_codes (email, code, used);
+
+

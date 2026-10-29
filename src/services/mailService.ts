@@ -3,25 +3,35 @@ import nodemailer, { Transporter } from 'nodemailer';
 export class MailService {
   private static transporter: Transporter | null = null;
 
+  public static isConfigured(): boolean {
+    const user = (process.env.EMAIL_USER || process.env.SMTP_USER || '').trim();
+    const pass = (process.env.EMAIL_PASS || process.env.SMTP_PASS || '').replace(/[\s"']/g, '').trim();
+    return Boolean(user && pass);
+  }
+
   private static getTransporter(): Transporter | null {
     if (this.transporter) return this.transporter;
 
-    const user = process.env.EMAIL_USER || process.env.SMTP_USER;
-    const pass = process.env.EMAIL_PASS || process.env.SMTP_PASS;
-    const host = process.env.SMTP_HOST;
+    const user = (process.env.EMAIL_USER || process.env.SMTP_USER || '').trim();
+    const rawPass = process.env.EMAIL_PASS || process.env.SMTP_PASS;
+    const pass = rawPass ? rawPass.replace(/[\s"']/g, '').trim() : '';
+    const host = (process.env.SMTP_HOST || '').trim();
 
     if (user && pass) {
       if (host) {
-        const port = parseInt(process.env.SMTP_PORT || '465', 10);
+        const port = parseInt(process.env.SMTP_PORT || '587', 10);
         const secure = process.env.SMTP_SECURE === 'true' || port === 465;
         this.transporter = nodemailer.createTransport({
           host,
           port,
           secure,
-          auth: { user, pass }
+          auth: { user, pass },
+          tls: {
+            rejectUnauthorized: false
+          }
         });
       } else {
-        // Por defecto soporta Gmail directamente sin necesidad de configurar host/puerto
+        // Por defecto soporta Gmail directamente sin necesidad de host/puerto
         this.transporter = nodemailer.createTransport({
           service: 'gmail',
           auth: { user, pass }
@@ -38,7 +48,9 @@ export class MailService {
    */
   static async sendPasswordResetCode(email: string, code: string): Promise<boolean> {
     const transporter = this.getTransporter();
-    const from = process.env.SMTP_FROM || 'Habitik <no-reply@habitik.app>';
+    const user = (process.env.EMAIL_USER || process.env.SMTP_USER || '').trim();
+    const defaultFrom = user ? `Habitik <${user}>` : 'Habitik <no-reply@habitik.app>';
+    const from = process.env.SMTP_FROM || defaultFrom;
 
     const htmlContent = `
       <div style="font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #f7f9f6; padding: 24px; border-radius: 16px;">
