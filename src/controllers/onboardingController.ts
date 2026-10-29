@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { OnboardingService } from '../services/onboardingService';
 import { OnboardingAnswers } from '../models/types';
+import { pool } from '../config/db';
 
 const onboardingService = new OnboardingService();
 
@@ -72,11 +73,22 @@ const onboardingService = new OnboardingService();
  */
 export const submitOnboarding = async (req: Request, res: Response): Promise<void> => {
   const userId = req.auth?.user_id;
-  const role = req.auth?.role;
 
   if (!userId) {
     res.status(401).json({ message: 'No autenticado.' });
     return;
+  }
+
+  // 1. Determinar rol efectivo: consultar BD y evaluar payload de forma defensiva
+  let effectiveRole = req.auth?.role;
+  try {
+    const profRes = await pool.query('SELECT rol FROM public.profiles WHERE id = $1', [userId]);
+    if (profRes.rows.length > 0 && profRes.rows[0].rol) {
+      const dbRol = profRes.rows[0].rol.toLowerCase();
+      effectiveRole = (dbRol === 'jefe' || dbRol === 'admin') ? 'admin' : 'miembro';
+    }
+  } catch (err) {
+    console.warn('[onboardingController] No se pudo consultar rol en BD, usando claim de token:', err);
   }
 
   const answers: OnboardingAnswers = req.body;
@@ -84,15 +96,25 @@ export const submitOnboarding = async (req: Request, res: Response): Promise<voi
   if (!answers || Object.keys(answers).length === 0) {
     res.status(400).json({
       message: 'Las respuestas del cuestionario son requeridas.',
-      hint: role === 'admin'
+      hint: effectiveRole === 'admin'
         ? 'Para Jefes envía: personasCount, habitacionesCount, tipoCalefaccion, electrodomesticos'
         : 'Para Miembros envía: tiempoDuchaPromedio, horasPantallaDiarias, frecuenciaReciclaje'
     });
     return;
   }
 
-  // Validación de campos requeridos según el rol
-  if (role === 'admin') {
+  // 2. Inferencia defensiva: Si el body contiene campos específicos de miembro o jefe,
+  // priorizar el tipo de cuestionario real enviado por el cliente para evitar falsos rechazos
+  if (answers.tiempoDuchaPromedio !== undefined || answers.horasPantallaDiarias !== undefined || answers.frecuenciaReciclaje !== undefined) {
+    if (!answers.personasCount && !answers.habitacionesCount) {
+      effectiveRole = 'miembro';
+    }
+  } else if (answers.personasCount !== undefined || answers.habitacionesCount !== undefined) {
+    effectiveRole = 'admin';
+  }
+
+  // 3. Validación de campos requeridos según el rol resuelto
+  if (effectiveRole === 'admin') {
     if (!answers.personasCount || !answers.habitacionesCount) {
       res.status(400).json({
         message: 'Los campos personasCount y habitacionesCount son requeridos para el Jefe de Familia.'
@@ -111,7 +133,7 @@ export const submitOnboarding = async (req: Request, res: Response): Promise<voi
   try {
     const mapaGasto = await onboardingService.saveOnboardingAndCalculate(
       userId,
-      role === 'admin' ? 'Jefe' : 'Miembro',
+      effectiveRole === 'admin' ? 'Jefe' : 'Miembro',
       answers
     );
 

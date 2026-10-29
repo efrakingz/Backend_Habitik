@@ -1,8 +1,10 @@
 import { Request, Response } from 'express';
+import jwt from 'jsonwebtoken';
 import { FamilyService } from '../services/familyService';
 import { pool } from '../config/db';
 
 const familyService = new FamilyService();
+const JWT_SECRET = process.env.JWT_SECRET || 'super_secret_jwt_key_12345';
 
 /**
  * Resuelve el family_id del usuario de forma robusta:
@@ -135,9 +137,29 @@ export const joinFamily = async (req: Request, res: Response): Promise<void> => 
 
   try {
     const family = await familyService.joinFamily(invite_token.trim(), userId);
+
+    // Obtener perfil actualizado para retornar al cliente y emitir nuevo token con rol 'miembro'
+    const profileRes = await pool.query(
+      `SELECT p.*, f.nombre AS family_name, f.family_code 
+       FROM public.profiles p 
+       LEFT JOIN public.families f ON p.family_id = f.id 
+       WHERE p.id = $1`,
+      [userId]
+    );
+    const updatedProfile = profileRes.rows[0];
+
+    const tokenPayload = {
+      user_id: userId,
+      family_id: family?.id,
+      role: 'miembro'
+    };
+    const newToken = jwt.sign(tokenPayload, JWT_SECRET, { expiresIn: '24h' });
+
     res.status(200).json({
       message: `¡Te has unido exitosamente al hogar "${family?.nombre || 'Familia'}"!`,
-      family
+      family,
+      token_jwt: newToken,
+      profile: updatedProfile
     });
   } catch (error) {
     if (error instanceof Error && error.message === 'TOKEN_EXPIRED_OR_USED') {
