@@ -48,7 +48,7 @@ export class InspeccionService {
         e.created_at,
         p.id AS user_id,
         p.nombre AS usuario_nombre,
-        p.metadata->>'avatar' AS usuario_avatar
+        COALESCE(p.avatar->>'url', null) AS usuario_avatar
       FROM public.inspeccion_evidencias e
       JOIN public.profiles p ON e.user_id = p.id
       WHERE e.family_id = $1 AND e.estado = 'pendiente'
@@ -65,7 +65,9 @@ export class InspeccionService {
 
       const jefeRes = await client.query('SELECT family_id, rol FROM public.profiles WHERE id = $1', [jefeId]);
       const jefe = jefeRes.rows[0];
-      if (!jefe || (jefe.rol !== 'Jefe' && jefe.rol !== 'jefe')) {
+      const rol = (jefe?.rol || '').toLowerCase();
+      
+      if (!jefe || (rol !== 'jefe' && rol !== 'admin')) {
         throw new Error('Solo el Jefe de Hogar puede aprobar inspecciones.');
       }
 
@@ -99,18 +101,13 @@ export class InspeccionService {
 
       await client.query(`
         INSERT INTO public.historial_gamificacion (
-          user_id, origen_actividad, xp_otorgada, monedas_otorgadas, metadata
-        ) VALUES ($1, $2, $3, $4, $5);
+          user_id, origen_actividad, xp_otorgada, monedas_otorgadas
+        ) VALUES ($1, $2, $3, $4);
       `, [
         evidencia.user_id,
         'inspeccion_fotografica',
         xpGanada,
-        monedasGanadas,
-        JSON.stringify({
-          titulo_mision: evidencia.titulo_mision,
-          foto_url: evidencia.foto_url,
-          destacado: true
-        })
+        monedasGanadas
       ]);
 
       await NotificationService.sendFamilyPushNotification(
@@ -147,8 +144,9 @@ export class InspeccionService {
       await client.query('BEGIN');
 
       const jefeRes = await client.query('SELECT rol FROM public.profiles WHERE id = $1', [jefeId]);
-      const rol = jefeRes.rows[0]?.rol;
-      if (rol !== 'Jefe' && rol !== 'jefe') {
+      const rol = (jefeRes.rows[0]?.rol || '').toLowerCase();
+      
+      if (rol !== 'jefe' && rol !== 'admin') {
         throw new Error('Solo el Jefe de Hogar puede rechazar inspecciones.');
       }
 

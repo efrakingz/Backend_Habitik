@@ -24,10 +24,13 @@ export const uploadInspeccion = multer({
   storage,
   limits: { fileSize: 5 * 1024 * 1024 }, // Límite de seguridad: 5 MB
   fileFilter: (_req, file, cb) => {
-    if (file.mimetype.startsWith('image/')) {
+    const isImageMime = file.mimetype.startsWith('image/');
+    const isImageExt = /\.(jpg|jpeg|png|webp|gif)$/i.test(file.originalname);
+
+    if (isImageMime || isImageExt) {
       cb(null, true);
     } else {
-      cb(new Error('Solo se permiten archivos de imagen.'));
+      cb(new Error('Solo se permiten archivos de imagen (.jpg, .jpeg, .png, .webp).'));
     }
   }
 });

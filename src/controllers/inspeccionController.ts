@@ -17,8 +17,8 @@ export class InspeccionController {
         return res.status(400).json({ ok: false, error: 'Faltan parámetros requeridos (titulo_mision).' });
       }
 
-      // Construcción de la URL pública alojada en Railway
-      const protocol = req.protocol;
+      // Construcción de la URL pública alojada en Railway forzando HTTPS
+      const protocol = req.headers['x-forwarded-proto'] || req.protocol;
       const host = req.get('host');
       const fotoUrl = `${protocol}://${host}/uploads/inspecciones/${req.file.filename}`;
 

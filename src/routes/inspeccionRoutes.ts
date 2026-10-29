@@ -7,8 +7,19 @@ const router = Router();
 
 router.use(verifyToken);
 
-// Carga de archivo directa mediante multipart/form-data
-router.post('/evidencia', uploadInspeccion.single('foto'), InspeccionController.enviarEvidencia);
+// Middleware para atrapar errores de Multer (tamaño, tipo de archivo)
+router.post(
+  '/evidencia',
+  (req, res, next) => {
+    uploadInspeccion.single('foto')(req, res, (err) => {
+      if (err) {
+        return res.status(400).json({ ok: false, error: err.message });
+      }
+      next();
+    });
+  },
+  InspeccionController.enviarEvidencia
+);
 
 // Gestión del Jefe de Hogar
 router.get('/pendientes', InspeccionController.listarPendientes);
