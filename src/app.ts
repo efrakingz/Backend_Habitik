@@ -15,6 +15,7 @@ import triviaRoutes from './routes/triviaRoutes';
 import wordleRoutes from './routes/wordleRoutes';
 import feedRoutes from './routes/feedRoutes';
 import inspeccionRoutes from './routes/inspeccionRoutes';
+import profileRoutes from './routes/profileRoutes';
 import path from 'path';
 
 const app = express();
@@ -41,6 +42,8 @@ app.use('/api/feed', feedRoutes);
 app.use('/api/familia/feed', feedRoutes);
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 app.use('/reto/inspeccion', inspeccionRoutes);
+app.use('/perfil', profileRoutes);
+
 
 app.get('/', (_req, res) => {
   res.json({
