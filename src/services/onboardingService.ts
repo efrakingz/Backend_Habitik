@@ -4,13 +4,6 @@ import { OnboardingAnswers } from '../models/types';
 export class OnboardingService {
   async saveOnboardingAndCalculate(userId: string, rol: string, answers: OnboardingAnswers) {
     // 1. Guardar las respuestas en la base de datos (columna onboarding_answers en public.profiles)
-    // Añadiremos soporte para guardar esto en un campo JSONB. Ejecutamos un ALTER TABLE dinámico si no existe.
-    try {
-      await query('ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS onboarding_answers JSONB');
-    } catch (e) {
-      // Ignorar si ya existe o falla por permisos menores
-    }
-
     await query(
       'UPDATE public.profiles SET onboarding_answers = $1 WHERE id = $2',
       [JSON.stringify(answers), userId]

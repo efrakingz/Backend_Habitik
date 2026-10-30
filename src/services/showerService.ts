@@ -1,6 +1,6 @@
 import { pool } from '../config/db';
-import { StreakService } from './streakService';
 import { LogrosService } from './logrosService';
+import { acreditarProgresoUsuario, evaluarLogrosTransversales } from './gamification/progressEngine';
 
 export class ShowerService {
   /**
@@ -11,7 +11,6 @@ export class ShowerService {
     try {
       await client.query('BEGIN');
 
-      // Buscar si ya existe una ducha en proceso
       const activeRes = await client.query(`
         SELECT id, iniciado_en FROM public.shower_logs
         WHERE user_id = $1 AND estado = 'en_proceso'
@@ -27,8 +26,6 @@ export class ShowerService {
         };
       }
 
-      // Crear nuevo registro de inicio
-      // En src/services/showerService.ts (dentro del método startShower)
       const insertRes = await client.query(`
         INSERT INTO public.shower_logs (user_id, duracion_segundos, estado, es_valido, iniciado_en)
         VALUES ($1, 0, 'en_proceso', FALSE, CURRENT_TIMESTAMP)
@@ -46,7 +43,7 @@ export class ShowerService {
   }
 
   /**
-   * Momento 2: Finalizar ducha, calcular recompensas y disparar logros automáticamente
+   * Momento 2: Finalizar ducha, calcular recompensas y disparar logros en lote
    */
   async finishShower(userId: string, duracionSegundosManual?: number) {
     const client = await pool.connect();
@@ -67,8 +64,7 @@ export class ShowerService {
       if (showerRes.rows.length > 0) {
         showerLogId = showerRes.rows[0].id;
         const iniciadoEn = new Date(showerRes.rows[0].iniciado_en).getTime();
-        const ahora = Date.now();
-        duracionSegundos = Math.floor((ahora - iniciadoEn) / 1000);
+        duracionSegundos = Math.floor((Date.now() - iniciadoEn) / 1000);
       } else if (!duracionSegundosManual) {
         throw new Error('No hay ninguna ducha activa registrada para finalizar.');
       }
@@ -95,7 +91,7 @@ export class ShowerService {
       }
 
       // 3. Escala de recompensas
-      let xp = 0;
+      let xp = 50;
       let monedas = 0;
 
       if (duracionSegundos <= 300) {
@@ -104,101 +100,54 @@ export class ShowerService {
       } else if (duracionSegundos <= 480) {
         xp = 100;
         monedas = 1;
-      } else {
-        xp = 50;
-        monedas = 0;
       }
 
-      // 4. Actualizar saldo del perfil
-      const prof = await client.query(`
-        SELECT xp, monedas, nivel FROM public.profiles WHERE id = $1 FOR UPDATE;
-      `, [userId]);
+      // 4. Actualizar registro en shower_logs
+      const logQuery = showerLogId
+        ? client.query(`
+            UPDATE public.shower_logs
+            SET duracion_segundos = $1, estado = 'valido', es_valido = TRUE,
+                xp_otorgada = $2, monedas_otorgadas = $3, finalizado_en = CURRENT_TIMESTAMP
+            WHERE id = $4
+            RETURNING *;
+          `, [duracionSegundos, xp, monedas, showerLogId])
+        : client.query(`
+            INSERT INTO public.shower_logs (user_id, duracion_segundos, estado, es_valido, xp_otorgada, monedas_otorgadas, finalizado_en)
+            VALUES ($1, $2, 'valido', TRUE, $3, $4, CURRENT_TIMESTAMP)
+            RETURNING *;
+          `, [userId, duracionSegundos, xp, monedas]);
 
-      if (prof.rows.length === 0) throw new Error('Perfil no encontrado.');
+      const logRes = await logQuery;
+      const logActualizado = logRes.rows[0];
 
-      const currentXp = prof.rows[0].xp || 0;
-      const currentNivel = prof.rows[0].nivel || 1;
-      const totalXp = currentXp + xp;
-      const saldoMonedas = (prof.rows[0].monedas || 0) + monedas;
+      // 5. Acreditar XP, monedas, nivel, racha e historial en una sola operación unificada
+      const progreso = await acreditarProgresoUsuario({
+        userId,
+        xpGanada: xp,
+        monedasGanadas: monedas,
+        origenActividad: 'speedrun_ducha',
+        actualizarRacha: true,
+      }, client);
 
-      await client.query(`
-        UPDATE public.profiles
-        SET xp = $1, monedas = $2
-        WHERE id = $3;
-      `, [totalXp, saldoMonedas, userId]);
-
-      // 5. Recalcular nivel dinámico mediante SQL
-      const nivelRes = await client.query(`SELECT public.obtener_nivel_usuario($1) AS nuevo_nivel;`, [userId]);
-      const nuevoNivel = nivelRes.rows[0]?.nuevo_nivel || Math.min(99, Math.floor(totalXp / 500) + 1);
-      const levelUp = nuevoNivel > currentNivel;
-
-      await client.query(`
-        UPDATE public.profiles
-        SET nivel = $1
-        WHERE id = $2;
-      `, [nuevoNivel, userId]);
-
-      // 6. Actualizar registro en shower_logs e historial
-      let logActualizado = null;
-      if (showerLogId) {
-        const updateLogRes = await client.query(`
-          UPDATE public.shower_logs
-          SET 
-            duracion_segundos = $1,
-            estado = 'valido',
-            es_valido = TRUE,
-            xp_otorgada = $2,
-            monedas_otorgadas = $3,
-            finalizado_en = CURRENT_TIMESTAMP
-          WHERE id = $4
-          RETURNING *;
-        `, [duracionSegundos, xp, monedas, showerLogId]);
-        logActualizado = updateLogRes.rows[0];
-      } else {
-        const insertLogRes = await client.query(`
-          INSERT INTO public.shower_logs (user_id, duracion_segundos, estado, es_valido, xp_otorgada, monedas_otorgadas, finalizado_en)
-          VALUES ($1, $2, 'valido', TRUE, $3, $4, CURRENT_TIMESTAMP)
-          RETURNING *;
-        `, [userId, duracionSegundos, xp, monedas]);
-        logActualizado = insertLogRes.rows[0];
-      }
-
-      const streak = await StreakService.actualizarRachaDiaria(client, userId);
-
-      await client.query(`
-        INSERT INTO public.historial_gamificacion (user_id, origen_actividad, monedas_otorgadas, xp_otorgada)
-        VALUES ($1, 'speedrun_ducha', $2, $3);
-      `, [userId, monedas, xp]);
-
-      // 7. 🏆 DISPARADORES DE LOGROS AUTOMÁTICOS
-      await LogrosService.otorgarLogroSiAplica(userId, 'PRIMERA_DUCHA', client);
-
-      if (duracionSegundos <= 240) {
-        await LogrosService.otorgarLogroSiAplica(userId, 'DUCHA_FLASH', client);
-      }
-
-      // Conteo acumulativo de duchas válidas
+      // 6. Evaluar y otorgar todos los logros aplicables en un único lote SQL
       const conteoDuchasRes = await client.query(`
-        SELECT COUNT(*) AS total 
+        SELECT COUNT(*)::int AS total 
         FROM public.shower_logs 
         WHERE user_id = $1 AND es_valido = TRUE;
       `, [userId]);
-      const totalDuchas = parseInt(conteoDuchasRes.rows[0]?.total || '0', 10);
+      const totalDuchas = Number(conteoDuchasRes.rows[0]?.total) || 0;
 
-      if (totalDuchas >= 5) {
-        await LogrosService.otorgarLogroSiAplica(userId, 'MEDALLA_DUCHA_BRONCE', client);
-      }
+      const codigosBase = ['PRIMERA_DUCHA'];
+      if (duracionSegundos <= 240) codigosBase.push('DUCHA_FLASH');
+      if (totalDuchas >= 5) codigosBase.push('MEDALLA_DUCHA_BRONCE');
 
-      if (streak.racha_dias >= 3) {
-        await LogrosService.otorgarLogroSiAplica(userId, 'RACHA_3', client);
-      }
-      if (streak.racha_dias >= 7) {
-        await LogrosService.otorgarLogroSiAplica(userId, 'RACHA_7', client);
-      }
+      const todosLosLogros = evaluarLogrosTransversales(
+        progreso.racha_dias,
+        progreso.saldo_monedas,
+        codigosBase
+      );
 
-      if (saldoMonedas >= 100) {
-        await LogrosService.otorgarLogroSiAplica(userId, 'BILLETERA_ECO', client);
-      }
+      await LogrosService.otorgarLogrosEnLote(userId, todosLosLogros, client);
 
       await client.query('COMMIT');
 
@@ -209,11 +158,11 @@ export class ShowerService {
           tiempo_segundos: duracionSegundos,
           xp_ganada: xp,
           monedas_ganadas: monedas,
-          total_xp: totalXp,
-          saldo_monedas: saldoMonedas,
-          nivel_actual: nuevoNivel,
-          level_up: levelUp,
-          racha_dias: streak.racha_dias
+          total_xp: progreso.total_xp,
+          saldo_monedas: progreso.saldo_monedas,
+          nivel_actual: progreso.nivel_actual,
+          level_up: progreso.level_up,
+          racha_dias: progreso.racha_dias
         }
       };
     } catch (error) {

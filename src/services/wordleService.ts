@@ -1,10 +1,11 @@
 import { pool } from '../config/db';
+import { acreditarProgresoUsuario } from './gamification/progressEngine';
 
 export class WordleService {
   /**
    * Obtiene la palabra del día directamente desde PostgreSQL de forma cíclica (UTC-4).
    */
-  private async getPalabraDelDia(client: any) {
+  private async getPalabraDelDia(client: any = pool) {
     const wordRes = await client.query(`
       SELECT id, palabra, pista FROM public.ecological_words 
       ORDER BY id 
@@ -33,22 +34,19 @@ export class WordleService {
   }
 
   async getTodayGame(userId: string) {
-    const client = await pool.connect();
-    try {
-      const palabraObj = await this.getPalabraDelDia(client);
-      const palabraSecreta = palabraObj.palabra.toUpperCase();
-      const gameSession = await this.getOrCreateSession(client, userId);
+    const [palabraObj, gameSession] = await Promise.all([
+      this.getPalabraDelDia(pool),
+      this.getOrCreateSession(pool, userId)
+    ]);
+    const palabraSecreta = palabraObj.palabra.toUpperCase();
 
-      return {
-        largo_palabra: palabraSecreta.length,
-        intentos_realizados: gameSession.intentos,
-        estado: gameSession.estado,
-        pista_revelada: gameSession.pista_revelada,
-        pista_educativa: (gameSession.estado !== 'en_proceso' || gameSession.pista_revelada) ? palabraObj.pista : null
-      };
-    } finally {
-      client.release();
-    }
+    return {
+      largo_palabra: palabraSecreta.length,
+      intentos_realizados: gameSession.intentos,
+      estado: gameSession.estado,
+      pista_revelada: gameSession.pista_revelada,
+      pista_educativa: (gameSession.estado !== 'en_proceso' || gameSession.pista_revelada) ? palabraObj.pista : null
+    };
   }
 
   async submitGuess(userId: string, intento: string) {
@@ -91,22 +89,19 @@ export class WordleService {
       }
 
       if (nuevoEstado === 'ganado') {
-        const profileRes = await client.query(`
-          SELECT xp, nivel, monedas FROM public.profiles WHERE id = $1 FOR UPDATE;
-        `, [userId]);
-        const profile = profileRes.rows[0];
+        const progreso = await acreditarProgresoUsuario({
+          userId,
+          xpGanada: 100,
+          monedasGanadas: 4,
+          origenActividad: 'wordle',
+          actualizarRacha: true
+        }, client);
 
-        const nuevaXp = (profile.xp || 0) + 100;
-        const nuevasMonedas = (profile.monedas || 0) + 4;
-        const nuevoNivel = Math.floor(nuevaXp / 500) + 1;
-
-        await client.query(`
-          UPDATE public.profiles 
-          SET xp = $1, monedas = $2, nivel = $3, ultima_actividad = CURRENT_DATE 
-          WHERE id = $4;
-        `, [nuevaXp, nuevasMonedas, nuevoNivel, userId]);
-
-        recompensasOtorgadas = { xp: 100, monedas: 4, nivel_actual: nuevoNivel };
+        recompensasOtorgadas = {
+          xp: 100,
+          monedas: 4,
+          nivel_actual: progreso.nivel_actual
+        };
       }
 
       await client.query(`

@@ -2,33 +2,10 @@ import { Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
 import { FamilyService } from '../services/familyService';
 import { pool } from '../config/db';
+import { resolveFamilyId } from '../utils/requestContext';
 
 const familyService = new FamilyService();
 const JWT_SECRET = process.env.JWT_SECRET || 'super_secret_jwt_key_12345';
-
-/**
- * Resuelve el family_id del usuario de forma robusta:
- * 1. Desde req.auth.family_id (payload del token JWT)
- * 2. Si viene por query param (?family_id=...) o header (x-family-id)
- * 3. Si no viene en el token (ej: emitido antes del onboarding o de unirse),
- *    se consulta directamente a public.profiles por req.auth.user_id en la BD.
- */
-async function resolveFamilyId(req: Request): Promise<string | null> {
-  if (req.auth?.family_id) return req.auth.family_id;
-  if (req.query.family_id && typeof req.query.family_id === 'string' && req.query.family_id.trim().length > 0) {
-    return req.query.family_id.trim();
-  }
-  if (req.headers['x-family-id'] && typeof req.headers['x-family-id'] === 'string' && req.headers['x-family-id'].trim().length > 0) {
-    return req.headers['x-family-id'].trim();
-  }
-  if (req.auth?.user_id) {
-    const prof = await pool.query('SELECT family_id FROM public.profiles WHERE id = $1', [req.auth.user_id]);
-    if (prof.rows.length > 0 && prof.rows[0].family_id) {
-      return prof.rows[0].family_id;
-    }
-  }
-  return null;
-}
 
 /**
  * ============================================================

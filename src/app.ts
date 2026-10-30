@@ -1,49 +1,16 @@
 import cors from 'cors';
 import express from 'express';
-import { getPerfil } from './controllers/authController';
-import { verifyToken } from './middleware/auth';
-import authRoutes from './routes/authRoutes';
-import billsRoutes from './routes/billsRoutes';
-import ecoRoutes from './routes/ecoRoutes';
-import familyRoutes from './routes/familyRoutes';
-import logrosRoutes from './routes/logrosRoutes';
-import notificationRoutes from './routes/notificationRoutes';
-import onboardingRoutes from './routes/onboardingRoutes';
-import rewardRoutes from './routes/rewardRoutes';
-import showerRoutes from './routes/showerRoutes';
-import triviaRoutes from './routes/triviaRoutes';
-import wordleRoutes from './routes/wordleRoutes';
-import feedRoutes from './routes/feedRoutes';
-import inspeccionRoutes from './routes/inspeccionRoutes';
-import profileRoutes from './routes/profileRoutes';
 import path from 'path';
+import { registerRoutes } from './routes';
 
 const app = express();
 
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-
-app.use('/auth', authRoutes);
-app.get('/perfil/:user_id', verifyToken, getPerfil);
-app.use('/familia', familyRoutes);
-app.use('/onboarding', onboardingRoutes);
-app.use('/reto', showerRoutes);
-app.use('/eco', ecoRoutes);
-app.use('/rewards', rewardRoutes);
-app.use('/logros', logrosRoutes);
-app.use('/trivia', triviaRoutes);
-app.use('/bills', billsRoutes);
-app.use('/wordle', wordleRoutes);
-app.use('/notifications', notificationRoutes);
-app.use('/api', notificationRoutes);
-app.use('/feed', feedRoutes);
-app.use('/api/feed', feedRoutes);
-app.use('/api/familia/feed', feedRoutes);
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
-app.use('/reto/inspeccion', inspeccionRoutes);
-app.use('/perfil', profileRoutes);
 
+registerRoutes(app);
 
 app.get('/', (_req, res) => {
   res.json({

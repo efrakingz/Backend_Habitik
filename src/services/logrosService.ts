@@ -2,38 +2,32 @@ import { pool } from '../config/db';
 
 export class LogrosService {
   /**
-   * Otorga un logro a un usuario si cumple los criterios.
-   * Acepta opcionalmente un cliente SQL para transacciones compuestas.
+   * Otorga múltiples logros en una sola consulta SQL atómica (1 solo round-trip).
    */
-  static async otorgarLogroSiAplica(userId: string, codigoLogro: string, dbClient?: any) {
-    const client = dbClient || await pool.connect();
-    const esConexionPropia = !dbClient;
+  static async otorgarLogrosEnLote(userId: string, codigosLogro: string[], dbClient?: any): Promise<void> {
+    const codigosUnicos = Array.from(new Set(codigosLogro.filter(Boolean)));
+    if (codigosUnicos.length === 0) return;
 
+    const executor = dbClient || pool;
     try {
-      if (esConexionPropia) await client.query('BEGIN');
-
-      const logroRes = await client.query(
-        `SELECT id FROM public.logros WHERE codigo = $1;`,
-        [codigoLogro]
+      await executor.query(
+        `INSERT INTO public.usuario_logros (user_id, logro_id)
+         SELECT $1, id
+         FROM public.logros
+         WHERE codigo = ANY($2::text[])
+         ON CONFLICT (user_id, logro_id) DO NOTHING;`,
+        [userId, codigosUnicos]
       );
-
-      if (logroRes.rows.length > 0) {
-        const logroId = logroRes.rows[0].id;
-        await client.query(
-          `INSERT INTO public.usuario_logros (user_id, logro_id)
-           VALUES ($1, $2)
-           ON CONFLICT (user_id, logro_id) DO NOTHING;`,
-          [userId, logroId]
-        );
-      }
-
-      if (esConexionPropia) await client.query('COMMIT');
     } catch (error) {
-      if (esConexionPropia) await client.query('ROLLBACK');
-      console.error(`Error al otorgar logro ${codigoLogro}:`, error);
-    } finally {
-      if (esConexionPropia) client.release();
+      console.error(`Error al otorgar logros en lote [${codigosUnicos.join(', ')}]:`, error);
     }
+  }
+
+  /**
+   * Otorga un logro individual delegando al motor en lote (1 sola consulta SQL).
+   */
+  static async otorgarLogroSiAplica(userId: string, codigoLogro: string, dbClient?: any): Promise<void> {
+    await LogrosService.otorgarLogrosEnLote(userId, [codigoLogro], dbClient);
   }
 
   /**
@@ -67,12 +61,12 @@ export class LogrosService {
     try {
       await client.query('BEGIN');
 
-      // 1. Coincidencia flexible por ID de catálogo (l.id) o ID de registro (ul.id)
       const ulRes = await client.query(`
         SELECT ul.id, l.monedas_recompensa, ul.reclamado
         FROM public.usuario_logros ul
         JOIN public.logros l ON ul.logro_id = l.id
-        WHERE ul.user_id = $1 AND (ul.logro_id = $2 OR ul.id = $2 OR l.id = $2);
+        WHERE ul.user_id = $1 AND (ul.logro_id = $2 OR ul.id = $2 OR l.id = $2)
+        FOR UPDATE OF ul;
       `, [userId, logroId]);
 
       if (ulRes.rows.length === 0) {
@@ -86,14 +80,12 @@ export class LogrosService {
       const monedasAGanar = ulRes.rows[0].monedas_recompensa;
       const registroId = ulRes.rows[0].id;
 
-      // 2. Marcar como reclamado en la tabla usuario_logros
       await client.query(`
         UPDATE public.usuario_logros 
         SET reclamado = true 
         WHERE id = $1;
       `, [registroId]);
 
-      // 3. Sumar monedas al perfil del usuario
       const profRes = await client.query(`
         UPDATE public.profiles
         SET monedas = COALESCE(monedas, 0) + $1
@@ -101,7 +93,6 @@ export class LogrosService {
         RETURNING monedas;
       `, [monedasAGanar, userId]);
 
-      // 4. Auditoría en el historial de gamificación
       await client.query(`
         INSERT INTO public.historial_gamificacion (user_id, origen_actividad, monedas_otorgadas, xp_otorgada)
         VALUES ($1, 'logro', $2, 0);
@@ -123,8 +114,7 @@ export class LogrosService {
   }
 
   /**
-   * Consulta el nivel calculado algorítmicamente desde PostgreSQL
-   * o calcula la equivalencia con la fórmula Floor(XP / 500) + 1
+   * Calcula el nivel del usuario con la fórmula estándar Floor(XP / 500) + 1 (máximo 99)
    */
   static async obtenerNivelCalculado(userId: string) {
     const res = await pool.query(

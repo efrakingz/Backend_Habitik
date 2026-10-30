@@ -1,13 +1,12 @@
 import { Request, Response } from 'express';
 import { InspeccionService } from '../services/inspeccionService';
-import { pool } from '../config/db';
+import { resolveFamilyId, resolveUserId } from '../utils/requestContext';
 
 export class InspeccionController {
   // POST /reto/inspeccion/evidencia (Multipart / Form-Data)
   static async enviarEvidencia(req: Request, res: Response) {
     try {
-      const userId = (req as any).auth?.user_id || (req as any).user?.id;
-      let familyId = (req as any).auth?.family_id || (req as any).user?.family_id;
+      const userId = resolveUserId(req);
       const { titulo_mision } = req.body;
 
       if (!userId) {
@@ -22,17 +21,11 @@ export class InspeccionController {
         return res.status(400).json({ ok: false, error: 'Falta parámetro requerido: titulo_mision.' });
       }
 
-      // Si family_id no viene en el token JWT, buscarlo de forma segura en la base de datos
-      if (!familyId) {
-        const profRes = await pool.query('SELECT family_id FROM public.profiles WHERE id = $1', [userId]);
-        familyId = profRes.rows[0]?.family_id;
-      }
-
+      const familyId = await resolveFamilyId(req);
       if (!familyId) {
         return res.status(400).json({ ok: false, error: 'El usuario no está asignado a un hogar familiar.' });
       }
 
-      // Construcción de la URL pública alojada forzando HTTPS en entornos remotos
       const protocol = req.headers['x-forwarded-proto'] || req.protocol;
       const host = req.get('host');
       const fotoUrl = `${protocol}://${host}/uploads/inspecciones/${req.file.filename}`;
@@ -51,23 +44,17 @@ export class InspeccionController {
 
   static async listarPendientes(req: Request, res: Response) {
     try {
-      const userId = (req as any).auth?.user_id || (req as any).user?.id;
-      let familyId = (req as any).auth?.family_id || (req as any).user?.family_id;
-
+      const userId = resolveUserId(req);
       if (!userId) {
         return res.status(401).json({ ok: false, error: 'Se requiere autenticación de usuario.' });
       }
 
-      if (!familyId) {
-        const profRes = await pool.query('SELECT family_id FROM public.profiles WHERE id = $1', [userId]);
-        familyId = profRes.rows[0]?.family_id;
-      }
-
+      const familyId = await resolveFamilyId(req);
       if (!familyId) {
         return res.status(400).json({ ok: false, error: 'No perteneces a ningún hogar familiar.' });
       }
 
-      const pendientes = await InspeccionService.obtenerPendientesFamilia(String(familyId));
+      const pendientes = await InspeccionService.obtenerPendientesFamilia(familyId);
       return res.status(200).json({ ok: true, data: pendientes });
     } catch (error: any) {
       return res.status(500).json({ ok: false, error: error.message });
@@ -76,7 +63,7 @@ export class InspeccionController {
 
   static async aprobar(req: Request, res: Response) {
     try {
-      const jefeId = (req as any).auth?.user_id || (req as any).user?.id;
+      const jefeId = resolveUserId(req);
       const { evidencia_id } = req.body;
 
       if (!jefeId) {
@@ -96,7 +83,7 @@ export class InspeccionController {
 
   static async rechazar(req: Request, res: Response) {
     try {
-      const jefeId = (req as any).auth?.user_id || (req as any).user?.id;
+      const jefeId = resolveUserId(req);
       const { evidencia_id, motivo } = req.body;
 
       if (!jefeId) {

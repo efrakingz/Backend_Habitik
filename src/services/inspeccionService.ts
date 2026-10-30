@@ -1,5 +1,6 @@
 import { pool } from '../config/db';
 import { NotificationService } from './notificationService';
+import { acreditarProgresoUsuario } from './gamification/progressEngine';
 
 export class InspeccionService {
   /**
@@ -93,30 +94,14 @@ export class InspeccionService {
       const xpGanada = 80;
       const monedasGanadas = 4;
 
-      // Recalcular nivel con LEAST/FLOOR y marcar actividad diaria
-      const profileUpdate = await client.query(`
-        UPDATE public.profiles
-        SET 
-          xp = COALESCE(xp, 0) + $1,
-          monedas = COALESCE(monedas, 0) + $2,
-          nivel = LEAST(99, FLOOR((COALESCE(xp, 0) + $1) / 500) + 1),
-          ultima_actividad = CURRENT_DATE
-        WHERE id = $3
-        RETURNING id, nombre, xp, monedas, nivel;
-      `, [xpGanada, monedasGanadas, evidencia.user_id]);
-
-      const perfilActualizado = profileUpdate.rows[0];
-
-      await client.query(`
-        INSERT INTO public.historial_gamificacion (
-          user_id, origen_actividad, xp_otorgada, monedas_otorgadas
-        ) VALUES ($1, $2, $3, $4);
-      `, [
-        evidencia.user_id,
-        'inspeccion_fotografica',
+      // Motor unificado de acreditación de progreso (XP, monedas, nivel, racha, historial y logros transversales)
+      const progreso = await acreditarProgresoUsuario({
+        userId: evidencia.user_id,
         xpGanada,
-        monedasGanadas
-      ]);
+        monedasGanadas,
+        origenActividad: 'inspeccion_fotografica',
+        actualizarRacha: true
+      }, client);
 
       await NotificationService.sendFamilyPushNotification(
         evidencia.family_id,
@@ -134,9 +119,9 @@ export class InspeccionService {
         recompensas: {
           xp_ganada: xpGanada,
           monedas_ganadas: monedasGanadas,
-          nuevo_saldo_monedas: perfilActualizado.monedas,
-          total_xp: perfilActualizado.xp,
-          nuevo_nivel: perfilActualizado.nivel
+          nuevo_saldo_monedas: progreso.saldo_monedas,
+          total_xp: progreso.total_xp,
+          nuevo_nivel: progreso.nivel_actual
         }
       };
     } catch (error) {
