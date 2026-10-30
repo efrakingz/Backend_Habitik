@@ -3,6 +3,7 @@ import { pool } from '../config/db';
 export class ProfileService {
   /**
    * Actualiza el nombre y los atributos visuales del avatar (color, letra, url)
+   * y retorna el perfil completo del usuario con información de familia y rachas.
    */
   static async actualizarPerfil(
     userId: string, 
@@ -44,13 +45,23 @@ export class ProfileService {
       const updateQuery = `
         UPDATE public.profiles
         SET nombre = $1, avatar = $2
-        WHERE id = $3
-        RETURNING id, nombre, email, rol, family_id, xp, monedas, nivel, avatar;
+        WHERE id = $3;
       `;
-      const res = await client.query(updateQuery, [nuevoNombre, JSON.stringify(nuevoAvatar), userId]);
+      await client.query(updateQuery, [nuevoNombre, JSON.stringify(nuevoAvatar), userId]);
+
+      // 4. Seleccionar el perfil completo enriquecido con la información del hogar
+      const selectQuery = `
+        SELECT 
+          p.id, p.nombre, p.email, p.rol, p.family_id, p.xp, p.monedas, p.nivel, p.racha_dias, p.avatar,
+          f.nombre AS family_name, f.family_code
+        FROM public.profiles p
+        LEFT JOIN public.families f ON f.id = p.family_id
+        WHERE p.id = $1;
+      `;
+      const fullRes = await client.query(selectQuery, [userId]);
 
       await client.query('COMMIT');
-      return res.rows[0];
+      return fullRes.rows[0];
     } catch (error) {
       await client.query('ROLLBACK');
       throw error;

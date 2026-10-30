@@ -5,11 +5,11 @@ export class ProfileController {
   // PUT /perfil/editar
   static async editarPerfil(req: Request, res: Response) {
     try {
-      const userId = (req as any).auth?.user_id || (req as any).user?.id || req.body.user_id;
+      const userId = (req as any).auth?.user_id || (req as any).user?.id;
       const { nombre, color, letra, url } = req.body;
 
       if (!userId) {
-        return res.status(400).json({ ok: false, error: 'Se requiere autenticación de usuario.' });
+        return res.status(401).json({ ok: false, error: 'Se requiere autenticación de usuario.' });
       }
 
       if (!nombre && !color && !letra && url === undefined) {

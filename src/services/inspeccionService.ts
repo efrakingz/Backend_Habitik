@@ -80,6 +80,11 @@ export class InspeccionService {
         throw new Error('La evidencia no existe o ya fue procesada.');
       }
 
+      // CA-Multitenant: Validar aislamiento de familias
+      if (jefe.family_id && evidencia.family_id && jefe.family_id !== evidencia.family_id) {
+        throw new Error('No tienes permisos para validar evidencias de otra familia.');
+      }
+
       await client.query(
         'UPDATE public.inspeccion_evidencias SET estado = \'aprobado\', validated_at = NOW() WHERE id = $1;',
         [evidenciaId]
@@ -88,13 +93,16 @@ export class InspeccionService {
       const xpGanada = 80;
       const monedasGanadas = 4;
 
+      // Recalcular nivel con LEAST/FLOOR y marcar actividad diaria
       const profileUpdate = await client.query(`
         UPDATE public.profiles
         SET 
           xp = COALESCE(xp, 0) + $1,
-          monedas = COALESCE(monedas, 0) + $2
+          monedas = COALESCE(monedas, 0) + $2,
+          nivel = LEAST(99, FLOOR((COALESCE(xp, 0) + $1) / 500) + 1),
+          ultima_actividad = CURRENT_DATE
         WHERE id = $3
-        RETURNING id, nombre, xp, monedas;
+        RETURNING id, nombre, xp, monedas, nivel;
       `, [xpGanada, monedasGanadas, evidencia.user_id]);
 
       const perfilActualizado = profileUpdate.rows[0];
@@ -127,7 +135,8 @@ export class InspeccionService {
           xp_ganada: xpGanada,
           monedas_ganadas: monedasGanadas,
           nuevo_saldo_monedas: perfilActualizado.monedas,
-          total_xp: perfilActualizado.xp
+          total_xp: perfilActualizado.xp,
+          nuevo_nivel: perfilActualizado.nivel
         }
       };
     } catch (error) {
@@ -143,11 +152,26 @@ export class InspeccionService {
     try {
       await client.query('BEGIN');
 
-      const jefeRes = await client.query('SELECT rol FROM public.profiles WHERE id = $1', [jefeId]);
-      const rol = (jefeRes.rows[0]?.rol || '').toLowerCase();
+      const jefeRes = await client.query('SELECT family_id, rol FROM public.profiles WHERE id = $1', [jefeId]);
+      const jefe = jefeRes.rows[0];
+      const rol = (jefe?.rol || '').toLowerCase();
       
-      if (rol !== 'jefe' && rol !== 'admin') {
+      if (!jefe || (rol !== 'jefe' && rol !== 'admin')) {
         throw new Error('Solo el Jefe de Hogar puede rechazar inspecciones.');
+      }
+
+      const evidenciaRes = await client.query(
+        'SELECT * FROM public.inspeccion_evidencias WHERE id = $1 AND estado = \'pendiente\' FOR UPDATE;',
+        [evidenciaId]
+      );
+      const evidencia = evidenciaRes.rows[0];
+      if (!evidencia) {
+        throw new Error('La evidencia no existe o ya fue procesada.');
+      }
+
+      // CA-Multitenant: Validar aislamiento de familias
+      if (jefe.family_id && evidencia.family_id && jefe.family_id !== evidencia.family_id) {
+        throw new Error('No tienes permisos para validar evidencias de otra familia.');
       }
 
       const updateRes = await client.query(`
@@ -156,11 +180,6 @@ export class InspeccionService {
         WHERE id = $2 AND estado = 'pendiente'
         RETURNING *;
       `, [motivo || 'Evidencia no clara o incompleta', evidenciaId]);
-
-      const evidencia = updateRes.rows[0];
-      if (!evidencia) {
-        throw new Error('La evidencia no existe o ya fue procesada.');
-      }
 
       await NotificationService.sendFamilyPushNotification(
         evidencia.family_id,
