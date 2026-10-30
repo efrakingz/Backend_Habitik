@@ -146,7 +146,7 @@ export const resetPassword = async (req: Request, res: Response): Promise<void> 
   try {
     await client.query('BEGIN');
 
-    // 1. Validar el código nuevamente con bloqueo pesimista
+    // 1. Validar el código con bloqueo pesimista
     const codeRes = await client.query(
       `SELECT id, expires_at, used 
        FROM public.password_reset_codes 
@@ -159,7 +159,7 @@ export const resetPassword = async (req: Request, res: Response): Promise<void> 
 
     if (codeRes.rows.length === 0) {
       await client.query('ROLLBACK');
-      res.status(400).json({ message: 'Código incorrecto.' });
+      res.status(400).json({ message: 'Código incorrecto. Verifica e intenta nuevamente.' });
       return;
     }
 
@@ -173,7 +173,7 @@ export const resetPassword = async (req: Request, res: Response): Promise<void> 
 
     if (new Date(record.expires_at) < new Date()) {
       await client.query('ROLLBACK');
-      res.status(400).json({ message: 'El código ha expirado. Solicita uno nuevo.' });
+      res.status(400).json({ message: 'El código ha expirado (validez de 15 minutos). Solicita uno nuevo.' });
       return;
     }
 
@@ -208,4 +208,3 @@ export const resetPassword = async (req: Request, res: Response): Promise<void> 
     client.release();
   }
 };
-

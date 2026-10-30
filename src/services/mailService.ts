@@ -5,7 +5,7 @@ export class MailService {
 
   public static isConfigured(): boolean {
     const user = (process.env.EMAIL_USER || process.env.SMTP_USER || '').trim();
-    const pass = (process.env.EMAIL_PASS || process.env.SMTP_PASS || '').replace(/[\s"']/g, '').trim();
+    const pass = (process.env.EMAIL_APP_PASSWORD || process.env.EMAIL_PASS || process.env.SMTP_PASS || '').replace(/[\s"']/g, '').trim();
     return Boolean(user && pass);
   }
 
@@ -13,7 +13,7 @@ export class MailService {
     if (this.transporter) return this.transporter;
 
     const user = (process.env.EMAIL_USER || process.env.SMTP_USER || '').trim();
-    const rawPass = process.env.EMAIL_PASS || process.env.SMTP_PASS;
+    const rawPass = process.env.EMAIL_APP_PASSWORD || process.env.EMAIL_PASS || process.env.SMTP_PASS;
     const pass = rawPass ? rawPass.replace(/[\s"']/g, '').trim() : '';
     const host = (process.env.SMTP_HOST || '').trim();
 

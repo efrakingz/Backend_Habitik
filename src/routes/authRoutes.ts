@@ -44,7 +44,7 @@ router.post('/verify-reset-code', verifyResetCode);
 
 /**
  * @route   POST /auth/reset-password
- * @desc    Aplica la nueva contraseña del usuario usando el código verificado.
+ * @desc    Valida el código y aplica la nueva contraseña del usuario.
  * @access  Público
  */
 router.post('/reset-password', resetPassword);
