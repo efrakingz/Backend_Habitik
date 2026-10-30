@@ -94,4 +94,16 @@ export class NotificationRepository {
     );
     return res.rowCount ?? 0;
   }
+
+  /**
+   * Purgado de notificaciones antiguas para proteger el almacenamiento de la base de datos.
+   */
+  async purgeOldNotifications(days: number = 7): Promise<number> {
+    const res = await query(
+      `DELETE FROM public.notifications 
+       WHERE created_at < NOW() - make_interval(days => $1);`,
+      [days]
+    );
+    return res.rowCount ?? 0;
+  }
 }

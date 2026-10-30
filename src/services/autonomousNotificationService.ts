@@ -97,6 +97,11 @@ export class AutonomousNotificationService {
     let skippedCount = 0;
 
     try {
+      // 2.1 Purgar notificaciones de más de 7 días para proteger almacenamiento
+      try {
+        await this.notificationService.purgeOldNotifications(7);
+      } catch (_) {}
+
       // 3. Obtener familias activas registradas
       const familiesRes = await this.database.query(`
         SELECT DISTINCT family_id 

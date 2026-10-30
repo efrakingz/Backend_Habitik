@@ -96,4 +96,11 @@ export class NotificationService {
   async markAsRead(notificationId: string): Promise<boolean> {
     return await this.repo.markAsRead(notificationId);
   }
+
+  /**
+   * Purgado periódico de notificaciones antiguas (retención por defecto: 7 días)
+   */
+  async purgeOldNotifications(days: number = 7): Promise<number> {
+    return await this.repo.purgeOldNotifications(days);
+  }
 }
