@@ -88,7 +88,7 @@ export class FeedService {
             COALESCE(sl.finalizado_en, sl.created_at) AS created_at
           FROM public.shower_logs sl
           JOIN public.profiles p ON sl.user_id = p.id
-          WHERE p.family_id::text = $1::text 
+          WHERE p.family_id = $1::uuid 
             AND sl.es_valido = TRUE 
             AND COALESCE(sl.finalizado_en, sl.created_at) IS NOT NULL
 
@@ -108,7 +108,7 @@ export class FeedService {
             t.created_at AS created_at
           FROM public.tasks t
           LEFT JOIN public.profiles p ON t.asignado_id = p.id
-          WHERE t.family_id::text = $1::text 
+          WHERE t.family_id = $1::uuid 
             AND t.hecho = TRUE
 
           UNION ALL
@@ -128,7 +128,7 @@ export class FeedService {
           FROM public.usuario_logros ul
           JOIN public.profiles p ON ul.user_id = p.id
           JOIN public.logros l ON ul.logro_id = l.id
-          WHERE p.family_id::text = $1::text 
+          WHERE p.family_id = $1::uuid 
             AND ul.fecha_desbloqueo IS NOT NULL
 
           UNION ALL
@@ -151,7 +151,7 @@ export class FeedService {
             rv.created_at AS created_at
           FROM public.reto_validations rv
           JOIN public.profiles p ON rv.user_id = p.id
-          WHERE p.family_id::text = $1::text 
+          WHERE p.family_id = $1::uuid 
             AND rv.estado = 'aprobado'
 
           UNION ALL
@@ -174,7 +174,7 @@ export class FeedService {
             e.created_at AS created_at
           FROM public.evidences e
           JOIN public.profiles p ON e.user_id = p.id
-          WHERE e.family_id::text = $1::text
+          WHERE e.family_id = $1::uuid
 
           UNION ALL
 
@@ -193,7 +193,7 @@ export class FeedService {
           FROM public.canjes c
           JOIN public.profiles p ON c.user_id = p.id
           JOIN public.family_rewards fr ON c.reward_id = fr.id
-          WHERE p.family_id::text = $1::text
+          WHERE p.family_id = $1::uuid
 
           UNION ALL
 
@@ -221,7 +221,7 @@ export class FeedService {
             hg.created_at AS created_at
           FROM public.historial_gamificacion hg
           JOIN public.profiles p ON hg.user_id = p.id
-          WHERE p.family_id::text = $1::text 
+          WHERE p.family_id = $1::uuid 
             AND hg.origen_actividad NOT IN ('speedrun_ducha', 'logro', 'canje')
         )
         SELECT 
