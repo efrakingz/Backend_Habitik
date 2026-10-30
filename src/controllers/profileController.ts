@@ -6,20 +6,20 @@ export class ProfileController {
   static async editarPerfil(req: Request, res: Response) {
     try {
       const userId = (req as any).auth?.user_id || (req as any).user?.id;
-      const { nombre, color, letra, url } = req.body;
+      const { nombre, color, letra, url, telefono } = req.body;
 
       if (!userId) {
         return res.status(401).json({ ok: false, error: 'Se requiere autenticación de usuario.' });
       }
 
-      if (!nombre && !color && !letra && url === undefined) {
+      if (!nombre && !color && !letra && url === undefined && telefono === undefined) {
         return res.status(400).json({
           ok: false,
-          error: 'Debes proporcionar al menos un campo a modificar (nombre, color, letra o url).'
+          error: 'Debes proporcionar al menos un campo a modificar (nombre, color, letra, url o telefono).'
         });
       }
 
-      const perfilActualizado = await ProfileService.actualizarPerfil(userId, nombre, color, letra, url);
+      const perfilActualizado = await ProfileService.actualizarPerfil(userId, nombre, color, letra, url, telefono);
 
       return res.status(200).json({
         ok: true,
