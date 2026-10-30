@@ -1,12 +1,12 @@
 import { Request, Response } from 'express';
 import { FeedService } from '../services/FeedService';
-import { broadcastFamilyLiveEvent } from '../utils/eventBroadcaster';
 
 export class FeedController {
   /**
    * GET /feed o GET /api/familia/feed
    * Lista cronológicamente las actividades recientes del muro familiar con avatares,
    * tareas completadas, fotos y estado de reacciones/likes.
+   * Limitado a 4 cards por defecto para prevenir sobrecarga.
    */
   static async listarFeed(req: Request, res: Response) {
     try {
@@ -20,8 +20,9 @@ export class FeedController {
         });
       }
 
-      // Parámetros de paginación
-      const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 20;
+      // Parámetros de paginación (limitado a 4 cards máximo por petición para prevenir sobrecarga)
+      const rawLimit = req.query.limit ? parseInt(req.query.limit as string, 10) : 4;
+      const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 20) : 4;
       const cursor = req.query.cursor ? String(req.query.cursor) : undefined;
 
       const feed = await FeedService.obtenerFeedFamiliar(familyId, limit, cursor, currentUserId);
@@ -48,7 +49,8 @@ export class FeedController {
   /**
    * POST /feed/:id/react o POST /api/familia/feed/:id/react
    * Registra, actualiza o remueve (toggle) una reacción/like en una actividad del muro.
-   * Emite el evento en tiempo real vía WebSockets a toda la familia.
+   * Emite el evento en tiempo real vía WebSockets a toda la familia de forma silenciosa
+   * (sin crear alertas ni guardar notificaciones).
    */
   static async reaccionarActividad(req: Request, res: Response) {
     try {
@@ -70,18 +72,17 @@ export class FeedController {
 
       const resultado = await FeedService.reaccionar(feedId, familyId, userId, tipoReaccion);
 
-      // Emisión en tiempo real vía WebSockets para que el muro se actualice al instante
+      // Emisión en tiempo real vía WebSockets solo para sincronizar contadores del muro
+      // (sin notificación de sistema, sin título y sin persistir en bandeja de notificaciones)
       const io = req.app.get('io');
       if (io && familyId) {
-        broadcastFamilyLiveEvent(io, familyId, {
+        io.to(`familia_${familyId}`).emit('evento_en_vivo', {
           id: `react_${feedId}_${userId}`,
           family_id: familyId,
           user_id: userId,
-          usuario_nombre: resultado.usuario_nombre || 'Un familiar',
-          titulo: '💬 Reacción en el Muro',
-          mensaje: `${resultado.usuario_nombre || 'Un familiar'} reaccionó con "${resultado.tipo}" a una actividad.`,
           tipo: 'FEED_REACCION',
-          visual: { icon: 'favorite', color: '#E91E63' },
+          es_notificacion: false,
+          silencioso: true,
           payload: {
             feed_id: feedId,
             tipo: resultado.tipo,

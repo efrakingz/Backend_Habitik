@@ -48,7 +48,7 @@ export class NotificationRepository {
               COALESCE(n.sender_name, p.nombre, 'Familiar') as usuario_nombre
        FROM public.notifications n
        LEFT JOIN public.profiles p ON n.sender_id = p.id
-       WHERE n.family_id = $1
+       WHERE n.family_id = $1 AND COALESCE(n.type, '') != 'FEED_REACCION'
        ORDER BY n.created_at DESC
        LIMIT $2`,
       [familyId, limit]

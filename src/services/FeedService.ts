@@ -64,7 +64,7 @@ export class FeedService {
    */
   static async obtenerFeedFamiliar(
     familyId: string,
-    limit: number = 20,
+    limit: number = 4,
     cursorDate?: string,
     currentUserId?: string
   ): Promise<FeedItem[]> {
