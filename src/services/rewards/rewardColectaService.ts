@@ -238,34 +238,20 @@ export class RewardColectaService {
           });
         }
       } else {
-        const titleNoti = esNuevoInicio
-          ? `🤝 ¡Nueva colecta familiar: ${reward.titulo}!`
-          : `🪙 ¡Aporte registrado a ${reward.titulo}!`;
-        const descNoti = esNuevoInicio
-          ? `${currentUser.nombre} inició la colecta aportando ${cuotaUsuario} 🪙. Faltan ${totalRequerido - nuevoRecaudado} 🪙 para completarla.`
-          : `${currentUser.nombre} aportó ${cuotaUsuario} 🪙. Van ${nuevoRecaudado} de ${totalRequerido} 🪙.`;
-
-        await client.query(`
-          INSERT INTO public.notifications (
-            family_id, sender_id, sender_name, title, desc_text, type, created_at, visual, payload
-          )
-          VALUES ($1, $2, $3, $4, $5, 'COLECTA_APORTE', CURRENT_TIMESTAMP, 
-                  '{"icon": "savings", "color": "#2E7D32"}'::jsonb, 
-                  $6::jsonb);
-        `, [familyId, userId, currentUser.nombre, titleNoti, descNoti, JSON.stringify({ reward_id: reward.id, canje_id: canjeId })]);
-
+        // En aportes parciales NO se genera notificación en la BD para evitar saturación de alertas.
+        // Solo se emite un evento silencioso en tiempo real para actualizar la barra de progreso en vivo.
         if (io) {
-          broadcastFamilyLiveEvent(io, familyId, {
+          io.to(`familia_${familyId}`).emit('evento_en_vivo', {
             tipo: esNuevoInicio ? 'COLECTA_INICIADA' : 'COLECTA_APORTE',
+            es_notificacion: false,
+            silencioso: true,
             family_id: familyId,
             reward_id: reward.id,
             reward_titulo: reward.titulo,
             usuario_nombre: currentUser.nombre,
             cuota_aportada: cuotaUsuario,
             total_recaudado: nuevoRecaudado,
-            total_requerido: totalRequerido,
-            titulo: titleNoti,
-            mensaje: descNoti
+            total_requerido: totalRequerido
           });
         }
       }

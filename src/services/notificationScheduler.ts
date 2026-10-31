@@ -4,8 +4,8 @@ import { autonomousNotificationService } from './autonomousNotificationService';
 let schedulerInterval: NodeJS.Timeout | null = null;
 let isCycleRunning = false;
 
-// Intervalo por defecto: cada 30 minutos (1.800.000 ms)
-const DEFAULT_INTERVAL_MS = 30 * 60 * 1000;
+// Intervalo por defecto: cada 4 horas (14.400.000 ms) para evitar saturación
+const DEFAULT_INTERVAL_MS = 4 * 60 * 60 * 1000;
 
 export function startNotificationScheduler(io: SocketIOServer, intervalMs: number = DEFAULT_INTERVAL_MS): void {
   if (schedulerInterval) {
@@ -15,10 +15,10 @@ export function startNotificationScheduler(io: SocketIOServer, intervalMs: numbe
 
   console.log(`⏰ [NotificationScheduler] Iniciando motor autónomo de notificaciones (intervalo: ${intervalMs / 60000} min)...`);
 
-  // Pequeña espera inicial de 15 segundos tras iniciar el servidor antes del primer ciclo
+  // Pequeña espera inicial de 30 segundos tras iniciar el servidor antes del primer ciclo
   setTimeout(async () => {
     await executeSafeCycle(io);
-  }, 15000);
+  }, 30000);
 
   schedulerInterval = setInterval(async () => {
     await executeSafeCycle(io);

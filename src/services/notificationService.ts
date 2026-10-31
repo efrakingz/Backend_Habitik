@@ -36,7 +36,8 @@ export class NotificationService {
   }
 
   /**
-   * Envía un evento familiar, lo guarda en la base de datos y lo transmite por WebSockets
+   * Envía un evento familiar, lo guarda en la base de datos y lo transmite por WebSockets.
+   * Aplica un control estricto de fatiga: máximo 4 notificaciones al día por familia.
    */
   async sendFamilyEvent(
     data: {
@@ -52,6 +53,38 @@ export class NotificationService {
     },
     io?: SocketIOServer | null
   ): Promise<AppNotification> {
+    // Control estricto de fatiga: máximo 4 notificaciones al día por familia
+    if (data.family_id) {
+      try {
+        const recent = await this.repo.getNotificationsByFamilyId(data.family_id, 10);
+        const now = new Date();
+        const countToday = recent.filter(n => {
+          const d = new Date(n.created_at ?? Date.now());
+          return (
+            d.getFullYear() === now.getFullYear() &&
+            d.getMonth() === now.getMonth() &&
+            d.getDate() === now.getDate()
+          );
+        }).length;
+
+        if (countToday >= 4) {
+          console.log(`⚠️ [NotificationService] Límite diario estricto alcanzado (máximo 4 al día para familia ${data.family_id}). Notificación descartada.`);
+          return {
+            id: 'limit_exceeded',
+            family_id: data.family_id,
+            user_id: data.user_id,
+            title: data.title,
+            desc_text: data.desc_text,
+            type: data.type || 'ALERTA_GENERAL',
+            created_at: now,
+            read: true,
+          } as AppNotification;
+        }
+      } catch (err) {
+        console.warn('⚠️ [NotificationService] Advertencia validando límite diario:', err);
+      }
+    }
+
     const saved = await this.repo.createNotification(data);
 
     const eventPayload = {
@@ -84,7 +117,7 @@ export class NotificationService {
   }
 
   /**
-   * Limpia el historial de la familia
+   * Elimina todas las notificaciones de una familia
    */
   async clearFamilyHistory(familyId: string): Promise<number> {
     return await this.repo.deleteFamilyNotifications(familyId);
@@ -93,12 +126,12 @@ export class NotificationService {
   /**
    * Marca una notificación como leída
    */
-  async markAsRead(notificationId: string): Promise<boolean> {
-    return await this.repo.markAsRead(notificationId);
+  async markAsRead(id: string): Promise<boolean> {
+    return await this.repo.markAsRead(id);
   }
 
   /**
-   * Purgado periódico de notificaciones antiguas (retención por defecto: 7 días)
+   * Purga notificaciones antiguas para proteger el almacenamiento
    */
   async purgeOldNotifications(days: number = 7): Promise<number> {
     return await this.repo.purgeOldNotifications(days);
