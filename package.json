@@ -1,11 +1,16 @@
 {
   "name": "habitik-backend",
   "version": "1.0.0",
-  "description": "Backend API for Habitik (Sprint 1) using Node, Express, TypeScript and PostgreSQL",
+  "description": "Backend API for Habitik using Node, Express, TypeScript and PostgreSQL",
   "main": "dist/server.js",
   "scripts": {
     "build": "tsc",
     "start": "ts-node src/server.ts",
+    "start:local": "ts-node src/server.ts",
+    "server:control": "node scripts/control.js",
+    "db:dump": "ts-node scripts/dump_railway_db.ts",
+    "db:local:up": "docker compose up -d postgres_local",
+    "db:local:down": "docker compose down",
     "dev": "nodemon --watch src --ext ts --exec ts-node src/server.ts",
     "test": "vitest run",
     "test:watch": "vitest"
