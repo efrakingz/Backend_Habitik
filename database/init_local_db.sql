@@ -264,7 +264,8 @@ CREATE TABLE IF NOT EXISTS public.usuario_logros (
   user_id UUID NOT NULL,
   logro_id UUID NOT NULL,
   reclamado BOOLEAN DEFAULT false,
-  fecha_desbloqueo TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+  fecha_desbloqueo TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT usuario_logros_user_id_logro_id_key UNIQUE (user_id, logro_id)
 );
 
 -- Tabla: public.historial_gamificacion
