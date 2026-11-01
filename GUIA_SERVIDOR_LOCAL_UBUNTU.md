@@ -174,3 +174,80 @@ En el panel web, al pie de la consola de la derecha, puedes escribir directament
 - `ping` -> Prueba la latencia real en milisegundos.
 - `restore` -> Recarga los datos iniciales de las 24 tablas desde `database/init_local_db.sql`.
 - `clear` -> Limpia la ventana de logs.
+
+---
+
+## 🧹 Mantenimiento y Rendimiento Máximo en Ubuntu WSL
+
+Para garantizar que el servidor vuele en cualquier notebook y consuma el mínimo de RAM y disco, ejecuta periódicamente este script de mantenimiento en Ubuntu (o PowerShell):
+
+```bash
+# Limpiar logs acumulados de Linux (libera espacio inmediato)
+sudo journalctl --vacuum-time=1d
+
+# Limpiar paquetes obsoletos e instaladores de APT
+sudo apt-get clean && sudo apt-get autoclean && sudo apt-get autoremove -y
+
+# Eliminar imágenes huérfanas y caché de construcción de Docker
+docker system prune -f
+docker builder prune -f
+
+# Liberar memoria RAM cacheada del kernel
+sync && sudo sh -c "echo 3 > /proc/sys/vm/drop_caches"
+
+# Verificar memoria libre (debe quedar con 12-14 GB libres)
+free -h
+```
+
+---
+
+## 💻 Instalación Express en un Segundo PC (Paso a Paso)
+
+Si vas a instalar todo en una segunda notebook antes de la feria:
+
+1. **En Windows:**
+   - Abre PowerShell como Administrador: `wsl --install -d Ubuntu`
+   - Reinicia el PC si te lo solicita.
+   - Abre la app **Ubuntu**, escribe un usuario y contraseña.
+
+2. **Dentro de Ubuntu:**
+   - Instala Docker:
+     ```bash
+     sudo apt update && sudo apt install -y curl docker.io docker-compose-v2
+     sudo usermod -aG docker $USER
+     sudo service docker start
+     ```
+
+3. **En Windows (Node.js y Git):**
+   - Asegúrate de tener instalado **Node.js LTS** (v18 o v20) y **Git**.
+   - Clona el repositorio:
+     ```bash
+     git clone -b feriaSofware https://github.com/efrakingz/Backend_Habitik.git backend
+     cd backend
+     npm install
+     ```
+   - Asegúrate de que exista el archivo `.env.local` con:
+     ```env
+     PORT=3000
+     DATABASE_URL=postgresql://postgres:postgrespassword123@localhost:5433/habitik_local
+     JWT_SECRET=habitik_feria_software_2026_secreto_key
+     NODE_ENV=production
+     ```
+
+4. **Ejecutar:**
+   - Doble clic en `Panel_Control_Habitik.bat` (o `node scripts/control_gui.js`).
+   - Clic en el botón verde **"🚀 INICIAR SERVIDOR COMPLETO"**.
+   - Docker descargará la imagen ligera `postgres:16-alpine`, montará las 24 tablas y las funciones almacenadas de `database/init_local_db.sql`, y el Backend levantará listo para la app.
+
+---
+
+## 🔒 Regla de Firewall de Windows (Para permitir conexiones de celulares)
+
+Si los celulares no pueden conectarse a la IP del notebook (`192.168.x.x`), ejecuta esto **una sola vez** en PowerShell como Administrador para abrir los puertos de la feria:
+
+```powershell
+New-NetFirewallRule -DisplayName "Habitik Backend 3000" -Direction Inbound -LocalPort 3000 -Protocol TCP -Action Allow
+New-NetFirewallRule -DisplayName "Habitik Panel 3333" -Direction Inbound -LocalPort 3333 -Protocol TCP -Action Allow
+New-NetFirewallRule -DisplayName "Habitik Discovery 3334" -Direction Inbound -LocalPort 3334 -Protocol UDP -Action Allow
+```
+
