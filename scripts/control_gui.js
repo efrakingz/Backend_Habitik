@@ -12,8 +12,13 @@ const UDP_DISCOVERY_PORT = 3334;
 
 let backendProcess = null;
 let backendLogs = [];
-const MAX_LOGS = 250;
+const MAX_LOGS = 300;
 let udpServer = null;
+
+// Máquina de estados unificada:
+// 'STOPPED' | 'STARTING' | 'RUNNING' | 'STOPPING'
+let systemState = 'STOPPED';
+let currentStartupStep = '';
 
 function addLog(msg, type = 'info') {
   const time = new Date().toLocaleTimeString();
@@ -50,7 +55,6 @@ function getAllLocalIps() {
   for (const name of Object.keys(nets)) {
     for (const net of nets[name] || []) {
       if (net.family === 'IPv4' && !net.internal) {
-        // Filtrar adaptadores virtuales típicos de WSL o Hyper-V si hay Wi-Fi disponible
         const isVirtual = name.toLowerCase().includes('vethernet') || name.toLowerCase().includes('wsl');
         results.push({
           name,
@@ -62,7 +66,6 @@ function getAllLocalIps() {
     }
   }
 
-  // Ordenar para dar prioridad a Wi-Fi física sobre adaptadores virtuales
   results.sort((a, b) => {
     if (a.isVirtual !== b.isVirtual) return a.isVirtual ? 1 : -1;
     return a.priority - b.priority;
@@ -79,8 +82,8 @@ function getPrimaryLocalIp() {
   return '127.0.0.1';
 }
 
-// Comprobar apertura de puerto TCP
-function checkPortOpen(port, host = '127.0.0.1', timeout = 900) {
+// Comprobar apertura de puerto TCP con timeout
+function checkPortOpen(port, host = '127.0.0.1', timeout = 800) {
   return new Promise((resolve) => {
     const client = require('net').createConnection({ port, host, timeout }, () => {
       client.destroy();
@@ -102,10 +105,66 @@ async function isDbRunning() {
   return await checkPortOpen(DB_PORT);
 }
 
+// Ruta dinámica de WSL universal
+function getProjectWslPath() {
+  const projectRoot = path.resolve(__dirname, '..');
+  const drive = projectRoot.charAt(0).toLowerCase();
+  const rest = projectRoot.slice(2).replace(/\\/g, '/');
+  return `/mnt/${drive}${rest}`;
+}
+
+// Iniciar Docker DB
+function startDatabaseInternal() {
+  addLog('Levantando contenedor Docker PostgreSQL en puerto 5433...', 'start');
+  const projectRoot = path.resolve(__dirname, '..');
+  
+  // 1. Probar docker nativo en Windows
+  try {
+    execSync('docker compose up -d', { cwd: projectRoot, stdio: 'pipe' });
+    addLog('Comando docker compose up ejecutado (Docker nativo).', 'info');
+    return true;
+  } catch (_) {}
+
+  // 2. Usar WSL Ubuntu
+  try {
+    const wslPath = getProjectWslPath();
+    const cmd = `wsl -d Ubuntu -- bash -c "cd '${wslPath}' && docker compose up -d"`;
+    execSync(cmd, { stdio: 'pipe' });
+    addLog('Comando docker compose up ejecutado en WSL Ubuntu.', 'info');
+    return true;
+  } catch (err) {
+    addLog(`Error al ejecutar docker compose: ${err.message}`, 'error');
+    return false;
+  }
+}
+
+// Detener Docker DB
+function stopDatabaseInternal() {
+  addLog('Deteniendo contenedor Docker PostgreSQL...', 'warn');
+  const projectRoot = path.resolve(__dirname, '..');
+
+  try {
+    execSync('docker compose stop', { cwd: projectRoot, stdio: 'pipe' });
+    addLog('Base de datos detenida (Docker nativo).', 'info');
+    return true;
+  } catch (_) {}
+
+  try {
+    const wslPath = getProjectWslPath();
+    const cmd = `wsl -d Ubuntu -- bash -c "cd '${wslPath}' && docker compose stop"`;
+    execSync(cmd, { stdio: 'pipe' });
+    addLog('Base de datos detenida (WSL Ubuntu).', 'info');
+    return true;
+  } catch (err) {
+    addLog(`Error deteniendo Docker DB: ${err.message}`, 'error');
+    return false;
+  }
+}
+
 // Iniciar Backend
-function startBackend() {
+function startBackendInternal() {
   if (backendProcess) return;
-  addLog('Iniciando backend Node.js en puerto 3000...', 'start');
+  addLog('Lanzando proceso Node.js (src/server.ts)...', 'start');
   
   const env = {
     ...process.env,
@@ -143,9 +202,9 @@ function startBackend() {
 }
 
 // Detener Backend
-function stopBackend() {
+function stopBackendInternal() {
   if (backendProcess) {
-    addLog('Deteniendo proceso backend...', 'warn');
+    addLog('Deteniendo proceso Backend...', 'warn');
     try {
       if (process.platform === 'win32') {
         execSync(`taskkill /pid ${backendProcess.pid} /T /F`);
@@ -157,61 +216,109 @@ function stopBackend() {
     }
     backendProcess = null;
   } else {
-    // Si corre externamente, matar en puerto 3000
     killProcessOnPort(BACKEND_PORT);
   }
 }
 
-// Rutas dinámicas para Docker en Windows y WSL
-function getProjectWslPath() {
-  const projectRoot = path.resolve(__dirname, '..');
-  const drive = projectRoot.charAt(0).toLowerCase();
-  const rest = projectRoot.slice(2).replace(/\\/g, '/');
-  return `/mnt/${drive}${rest}`;
+// ==========================================
+// ORQUESTADOR MAESTRO UNIFICADO (1 SOLO BOTÓN)
+// ==========================================
+async function startFullStack() {
+  if (systemState === 'STARTING' || systemState === 'RUNNING') return;
+  systemState = 'STARTING';
+
+  addLog('════════════════════════════════════════════════════════', 'start');
+  addLog('🚀 INICIANDO ENTORNO LOCAL CONTROLADO DE HABITIK...', 'start');
+  addLog('════════════════════════════════════════════════════════', 'start');
+
+  // FASE 1: Iniciar Base de Datos Docker
+  currentStartupStep = 'Paso 1/3: Levantando PostgreSQL en Docker (puerto 5433)...';
+  addLog(currentStartupStep, 'start');
+  startDatabaseInternal();
+
+  // FASE 2: Espera activa hasta que PostgreSQL esté listo y respondiendo consultas
+  currentStartupStep = 'Paso 2/3: Verificando que PostgreSQL acepte conexiones...';
+  addLog(currentStartupStep, 'info');
+
+  let dbReady = false;
+  for (let attempt = 1; attempt <= 15; attempt++) {
+    await new Promise(r => setTimeout(r, 600));
+    dbReady = await isDbRunning();
+    if (dbReady) {
+      addLog(`✅ PostgreSQL verificado y aceptando conexiones en el intento ${attempt}.`, 'success');
+      break;
+    }
+    addLog(`   ...esperando a que PostgreSQL inicialice el socket (${attempt}/15)...`, 'info');
+  }
+
+  if (!dbReady) {
+    addLog('❌ ERROR: PostgreSQL no respondió en puerto 5433. Abortando arranque.', 'error');
+    systemState = 'STOPPED';
+    currentStartupStep = '';
+    return false;
+  }
+
+  // FASE 3: Iniciar Backend con la BD garantizada
+  currentStartupStep = 'Paso 3/3: Arrancando Backend Node.js en puerto 3000...';
+  addLog(currentStartupStep, 'start');
+  startBackendInternal();
+
+  // Esperar a que el backend levante
+  let backendReady = false;
+  for (let attempt = 1; attempt <= 20; attempt++) {
+    await new Promise(r => setTimeout(r, 500));
+    backendReady = await isBackendRunning();
+    if (backendReady) break;
+  }
+
+  if (backendReady) {
+    // Comprobar respuesta HTTP real
+    const ping = await pingBackendInternal();
+    if (ping.success) {
+      addLog(`✅ Backend HTTP verificado en ${ping.latencyMs} ms (código ${ping.statusCode}).`, 'success');
+    }
+  }
+
+  systemState = 'RUNNING';
+  currentStartupStep = '';
+  addLog('════════════════════════════════════════════════════════', 'success');
+  addLog('🎉 ¡SERVIDOR HABITIK 100% OPERATIVO Y SINCRONIZADO!', 'success');
+  addLog(`📡 Dirección IP local para la app: http://${getPrimaryLocalIp()}:${BACKEND_PORT}`, 'success');
+  addLog('════════════════════════════════════════════════════════', 'success');
+  return true;
 }
 
-// Iniciar Docker DB
-function startDatabase() {
-  addLog('Iniciando contenedor Docker PostgreSQL en puerto 5433...', 'start');
-  const projectRoot = path.resolve(__dirname, '..');
-  
-  // 1. Probar docker nativo de Windows si estuviera disponible
-  try {
-    execSync('docker compose up -d', { cwd: projectRoot, stdio: 'pipe' });
-    addLog('Base de datos Docker levantada exitosamente (Docker nativo).', 'success');
-    return;
-  } catch (_) {}
+async function stopFullStack() {
+  if (systemState === 'STOPPED' || systemState === 'STOPPING') return;
+  systemState = 'STOPPING';
 
-  // 2. Usar WSL Ubuntu con ruta dinámica universal
-  try {
-    const wslPath = getProjectWslPath();
-    const cmd = `wsl -d Ubuntu -- bash -c "cd '${wslPath}' && docker compose up -d"`;
-    execSync(cmd, { stdio: 'pipe' });
-    addLog('Base de datos Docker levantada exitosamente en puerto 5433 (WSL Ubuntu).', 'success');
-  } catch (err) {
-    addLog(`Error iniciando Docker DB: ${err.message}`, 'error');
-  }
+  addLog('════════════════════════════════════════════════════════', 'warn');
+  addLog('🛑 DETENIENDO SISTEMA LOCAL HABITIK...', 'warn');
+  addLog('════════════════════════════════════════════════════════', 'warn');
+
+  // Detener Backend primero (cierre ordenado)
+  currentStartupStep = 'Deteniendo Backend Node.js...';
+  addLog(`[1/2] ${currentStartupStep}`, 'info');
+  stopBackendInternal();
+  await new Promise(r => setTimeout(r, 800));
+
+  // Detener Docker después
+  currentStartupStep = 'Deteniendo contenedor Docker PostgreSQL...';
+  addLog(`[2/2] ${currentStartupStep}`, 'info');
+  stopDatabaseInternal();
+  await new Promise(r => setTimeout(r, 800));
+
+  systemState = 'STOPPED';
+  currentStartupStep = '';
+  addLog('✅ Sistema completamente detenido. Puertos 3000 y 5433 liberados.', 'success');
+  return true;
 }
 
-// Detener Docker DB
-function stopDatabase() {
-  addLog('Deteniendo contenedor Docker PostgreSQL...', 'warn');
-  const projectRoot = path.resolve(__dirname, '..');
-
-  try {
-    execSync('docker compose stop', { cwd: projectRoot, stdio: 'pipe' });
-    addLog('Base de datos detenida (Docker nativo).', 'info');
-    return;
-  } catch (_) {}
-
-  try {
-    const wslPath = getProjectWslPath();
-    const cmd = `wsl -d Ubuntu -- bash -c "cd '${wslPath}' && docker compose stop"`;
-    execSync(cmd, { stdio: 'pipe' });
-    addLog('Base de datos detenida (WSL Ubuntu).', 'info');
-  } catch (err) {
-    addLog(`Error deteniendo Docker DB: ${err.message}`, 'error');
-  }
+async function restartFullStack() {
+  addLog('🔄 Reiniciando sistema completo de forma orquestada...', 'start');
+  await stopFullStack();
+  await new Promise(r => setTimeout(r, 1200));
+  await startFullStack();
 }
 
 // Restaurar Base de Datos desde SQL
@@ -299,11 +406,11 @@ function pingBackendInternal() {
       });
     });
 
-    req.on('error', (err) => {
+    req.on('error', () => {
       resolve({
         success: false,
         latencyMs: 0,
-        error: 'El backend no está respondiendo en el puerto 3000. Inícialo primero.'
+        error: 'El backend no está respondiendo en el puerto 3000.'
       });
     });
 
@@ -319,6 +426,43 @@ function pingBackendInternal() {
 }
 
 // ==========================================
+// GUARDIÁN AUTÓNOMO (WATCHDOG & AUTO-HEALING)
+// ==========================================
+let watchdogBusy = false;
+setInterval(async () => {
+  if (systemState === 'RUNNING' && !watchdogBusy) {
+    watchdogBusy = true;
+    try {
+      const dbOk = await isDbRunning();
+      const backendOk = await isBackendRunning();
+
+      if (!dbOk) {
+        addLog('⚠️ [Guardián] PostgreSQL en puerto 5433 no responde. Levantando contenedor automáticamente...', 'warn');
+        startDatabaseInternal();
+        for (let i = 0; i < 8; i++) {
+          await new Promise(r => setTimeout(r, 600));
+          if (await isDbRunning()) {
+            addLog('✅ [Guardián] PostgreSQL restaurado y listo.', 'success');
+            // Probar si el backend necesita reconectar
+            const p = await pingBackendInternal();
+            if (!p.success) {
+              addLog('🔄 [Guardián] Reconectando backend para refrescar pool de BD...', 'warn');
+              stopBackendInternal();
+              setTimeout(startBackendInternal, 600);
+            }
+            break;
+          }
+        }
+      } else if (!backendOk) {
+        addLog('⚠️ [Guardián] Backend Node.js detenido inesperadamente. Reiniciando...', 'warn');
+        startBackendInternal();
+      }
+    } catch (_) {}
+    watchdogBusy = false;
+  }
+}, 4500);
+
+// ==========================================
 // INTERFAZ WEB PROFESIONAL (ESTILO ANGULAR / MODERN SPA)
 // ==========================================
 const HTML_DASHBOARD = `
@@ -327,23 +471,24 @@ const HTML_DASHBOARD = `
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Habitik Server Pro — Panel de Control y Telemetría</title>
+  <title>Habitik Server Pro — Centro de Control Orquestado</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
     :root {
-      --bg-gradient: radial-gradient(circle at 10% 10%, #0d201a 0%, #080d14 45%, #04070a 100%);
-      --panel-bg: rgba(13, 22, 33, 0.78);
+      --bg-gradient: radial-gradient(circle at 10% 10%, #0c1d18 0%, #080d14 45%, #04070a 100%);
+      --panel-bg: rgba(13, 22, 33, 0.82);
       --panel-border: rgba(16, 185, 129, 0.22);
       --primary: #10B981;
       --primary-hover: #059669;
-      --primary-glow: rgba(16, 185, 129, 0.35);
+      --primary-glow: rgba(16, 185, 129, 0.38);
       --cyan: #06B6D4;
       --cyan-glow: rgba(6, 182, 212, 0.35);
       --danger: #EF4444;
       --danger-hover: #DC2626;
-      --danger-glow: rgba(239, 68, 68, 0.35);
+      --danger-glow: rgba(239, 68, 68, 0.4);
+      --warning: #F59E0B;
       --text: #F8FAFC;
       --text-muted: #94A3B8;
       --terminal-bg: #03060a;
@@ -407,33 +552,43 @@ const HTML_DASHBOARD = `
       font-weight: 500;
     }
 
-    .header-badges {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-    }
-
     .badge-live {
       display: flex;
       align-items: center;
       gap: 8px;
-      background: rgba(16, 185, 129, 0.12);
-      border: 1px solid rgba(16, 185, 129, 0.35);
-      color: #34D399;
-      padding: 6px 14px;
+      padding: 7px 16px;
       border-radius: 999px;
       font-size: 12px;
-      font-weight: 700;
+      font-weight: 800;
       text-transform: uppercase;
       letter-spacing: 0.5px;
+      transition: all 0.3s;
+    }
+
+    .badge-live.running {
+      background: rgba(16, 185, 129, 0.15);
+      border: 1px solid rgba(16, 185, 129, 0.45);
+      color: #34D399;
+    }
+
+    .badge-live.starting {
+      background: rgba(245, 158, 11, 0.15);
+      border: 1px solid rgba(245, 158, 11, 0.45);
+      color: #FBBF24;
+    }
+
+    .badge-live.stopped {
+      background: rgba(239, 68, 68, 0.15);
+      border: 1px solid rgba(239, 68, 68, 0.45);
+      color: #F87171;
     }
 
     .pulse-dot {
-      width: 8px;
-      height: 8px;
+      width: 9px;
+      height: 9px;
       border-radius: 50%;
-      background: #10B981;
-      box-shadow: 0 0 10px #10B981;
+      background: currentColor;
+      box-shadow: 0 0 10px currentColor;
       animation: pulse 1.8s infinite;
     }
 
@@ -443,7 +598,7 @@ const HTML_DASHBOARD = `
       100% { transform: scale(0.9); opacity: 0.8; }
     }
 
-    /* Main Split Screen Layout */
+    /* Split Screen 2-Column Layout */
     .app-layout {
       display: grid;
       grid-template-columns: minmax(430px, 1.05fr) minmax(480px, 1.35fr);
@@ -470,119 +625,144 @@ const HTML_DASHBOARD = `
       position: relative;
     }
 
-    .card-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 14px;
+    /* Hero Master Control Card */
+    .hero-card {
+      background: linear-gradient(145deg, rgba(16, 27, 40, 0.95), rgba(8, 15, 24, 0.95));
+      border: 1px solid rgba(16, 185, 129, 0.35);
+      text-align: center;
+      padding: 24px;
     }
 
-    .card-title {
-      font-size: 15px;
-      font-weight: 700;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-
-    .status-tag {
-      font-size: 11px;
-      font-weight: 800;
-      padding: 4px 10px;
-      border-radius: 8px;
-      text-transform: uppercase;
-      letter-spacing: 0.4px;
-    }
-
-    .status-tag.on {
-      background: rgba(16, 185, 129, 0.16);
-      color: #34D399;
-      border: 1px solid rgba(16, 185, 129, 0.4);
-    }
-
-    .status-tag.off {
-      background: rgba(239, 68, 68, 0.16);
-      color: #F87171;
-      border: 1px solid rgba(239, 68, 68, 0.4);
-    }
-
-    .spec-grid {
-      display: grid;
-      grid-template-columns: repeat(2, 1fr);
-      gap: 10px;
-      margin-bottom: 16px;
-      background: rgba(0, 0, 0, 0.25);
-      padding: 12px;
-      border-radius: 12px;
-      border: 1px solid rgba(255, 255, 255, 0.05);
-    }
-
-    .spec-item {
-      display: flex;
-      flex-direction: column;
-      gap: 2px;
-    }
-
-    .spec-label {
-      font-size: 11px;
-      color: var(--text-muted);
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      font-weight: 600;
-    }
-
-    .spec-value {
+    .hero-title {
       font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
       font-weight: 700;
-      color: #E2E8F0;
-      font-family: 'JetBrains Mono', monospace;
+      color: var(--text-muted);
+      margin-bottom: 12px;
     }
 
-    .btn-row {
-      display: flex;
-      gap: 10px;
-    }
-
-    .btn {
-      flex: 1;
-      padding: 11px 16px;
-      border-radius: 12px;
+    .master-btn {
+      width: 100%;
+      padding: 16px 24px;
+      border-radius: 14px;
       border: none;
       font-family: inherit;
-      font-size: 13px;
+      font-size: 16px;
+      font-weight: 800;
+      cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+      letter-spacing: -0.2px;
+    }
+
+    .master-btn:active { transform: scale(0.98); }
+
+    .master-btn-start {
+      background: linear-gradient(135deg, #10B981, #059669);
+      color: white;
+      box-shadow: 0 6px 24px var(--primary-glow);
+    }
+    .master-btn-start:hover {
+      background: linear-gradient(135deg, #34D399, #10B981);
+      box-shadow: 0 8px 30px var(--primary-glow);
+    }
+
+    .master-btn-stop {
+      background: linear-gradient(135deg, #EF4444, #B91C1C);
+      color: white;
+      box-shadow: 0 6px 24px var(--danger-glow);
+    }
+    .master-btn-stop:hover {
+      background: linear-gradient(135deg, #F87171, #EF4444);
+      box-shadow: 0 8px 30px var(--danger-glow);
+    }
+
+    .master-btn-starting {
+      background: linear-gradient(135deg, #F59E0B, #D97706);
+      color: white;
+      cursor: wait;
+    }
+
+    .master-subtext {
+      font-size: 11px;
+      font-weight: 500;
+      opacity: 0.85;
+    }
+
+    .quick-actions-row {
+      display: flex;
+      gap: 10px;
+      margin-top: 14px;
+    }
+
+    .btn-sub {
+      flex: 1;
+      padding: 10px 14px;
+      border-radius: 10px;
+      font-family: inherit;
+      font-size: 12px;
       font-weight: 700;
       cursor: pointer;
       display: flex;
       align-items: center;
       justify-content: center;
-      gap: 7px;
-      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-    }
-
-    .btn:active { transform: scale(0.98); }
-
-    .btn-start {
-      background: linear-gradient(135deg, #10B981, #059669);
-      color: white;
-      box-shadow: 0 4px 14px var(--primary-glow);
-    }
-    .btn-start:hover { background: linear-gradient(135deg, #34D399, #10B981); }
-
-    .btn-stop {
-      background: linear-gradient(135deg, #EF4444, #B91C1C);
-      color: white;
-      box-shadow: 0 4px 14px var(--danger-glow);
-    }
-    .btn-stop:hover { background: linear-gradient(135deg, #F87171, #EF4444); }
-
-    .btn-secondary {
-      background: rgba(255, 255, 255, 0.07);
+      gap: 6px;
+      background: rgba(255, 255, 255, 0.06);
       color: #E2E8F0;
       border: 1px solid rgba(255, 255, 255, 0.12);
+      transition: all 0.2s;
     }
-    .btn-secondary:hover {
+    .btn-sub:hover {
       background: rgba(255, 255, 255, 0.12);
       border-color: rgba(255, 255, 255, 0.25);
+    }
+
+    /* Service Status Indicators */
+    .services-status-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 12px;
+    }
+
+    .svc-badge-card {
+      background: rgba(0, 0, 0, 0.3);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 14px;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .svc-title {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--text-muted);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .svc-state-pill {
+      font-size: 10px;
+      font-weight: 800;
+      padding: 2px 7px;
+      border-radius: 6px;
+      text-transform: uppercase;
+    }
+    .svc-state-pill.on { background: rgba(16, 185, 129, 0.2); color: #34D399; }
+    .svc-state-pill.off { background: rgba(239, 68, 68, 0.2); color: #F87171; }
+
+    .svc-detail {
+      font-size: 13px;
+      font-weight: 700;
+      font-family: 'JetBrains Mono', monospace;
+      color: #F1F5F9;
     }
 
     /* Network Card */
@@ -591,14 +771,14 @@ const HTML_DASHBOARD = `
       border: 1px solid rgba(6, 182, 212, 0.3);
       border-radius: 14px;
       padding: 14px;
-      margin-bottom: 14px;
+      margin-bottom: 12px;
     }
 
     .ip-display {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      margin-bottom: 10px;
+      margin-bottom: 8px;
     }
 
     .ip-val {
@@ -621,7 +801,6 @@ const HTML_DASHBOARD = `
       align-items: center;
       gap: 4px;
     }
-
     .copy-chip:hover { background: rgba(6, 182, 212, 0.3); }
 
     .qr-container {
@@ -650,7 +829,7 @@ const HTML_DASHBOARD = `
 
     .ping-result-badge {
       margin-top: 10px;
-      padding: 8px 12px;
+      padding: 9px 12px;
       border-radius: 10px;
       font-size: 12px;
       font-weight: 600;
@@ -658,14 +837,12 @@ const HTML_DASHBOARD = `
       align-items: center;
       gap: 8px;
     }
-
     .ping-result-badge.success {
       display: flex;
       background: rgba(16, 185, 129, 0.15);
       border: 1px solid rgba(16, 185, 129, 0.4);
       color: #6EE7B7;
     }
-
     .ping-result-badge.error {
       display: flex;
       background: rgba(239, 68, 68, 0.15);
@@ -700,16 +877,8 @@ const HTML_DASHBOARD = `
       gap: 10px;
     }
 
-    .term-dots {
-      display: flex;
-      gap: 6px;
-    }
-
-    .term-dot {
-      width: 10px;
-      height: 10px;
-      border-radius: 50%;
-    }
+    .term-dots { display: flex; gap: 6px; }
+    .term-dot { width: 10px; height: 10px; border-radius: 50%; }
     .td-red { background: #FF5F56; }
     .td-yellow { background: #FFBD2E; }
     .td-green { background: #27C93F; }
@@ -830,14 +999,14 @@ const HTML_DASHBOARD = `
     <div class="brand-group">
       <div class="logo-badge">🌿</div>
       <div class="title-group">
-        <h1>HABITIK SERVER CONTROL PRO</h1>
-        <p>Servidor Local de Alta Disponibilidad — Feria de Software 2026</p>
+        <h1>HABITIK SERVER PRO — CONTROL MAESTRO</h1>
+        <p>Orquestador Controlado de Contingencia (PostgreSQL + Express) — Feria 2026</p>
       </div>
     </div>
-    <div class="header-badges">
-      <div class="badge-live">
+    <div>
+      <div id="global-badge" class="badge-live stopped">
         <span class="pulse-dot"></span>
-        <span id="global-status">SISTEMA LISTO</span>
+        <span id="global-status-text">SISTEMA APAGADO</span>
       </div>
     </div>
   </header>
@@ -848,85 +1017,58 @@ const HTML_DASHBOARD = `
     <!-- LEFT COLUMN: CONTROLS & STATUS -->
     <section class="controls-col">
       
-      <!-- Backend Card -->
-      <div class="card">
-        <div class="card-header">
-          <div class="card-title">
-            <span>🚀</span> Servidor Backend API
-          </div>
-          <span id="backend-status-tag" class="status-tag off">OFFLINE</span>
-        </div>
-        <div class="spec-grid">
-          <div class="spec-item">
-            <span class="spec-label">Puerto HTTP</span>
-            <span class="spec-value">3000 (0.0.0.0)</span>
-          </div>
-          <div class="spec-item">
-            <span class="spec-label">WebSockets</span>
-            <span class="spec-value">Socket.io (Activo)</span>
-          </div>
-          <div class="spec-item">
-            <span class="spec-label">Arquitectura</span>
-            <span class="spec-value">Modular Stateless</span>
-          </div>
-          <div class="spec-item">
-            <span class="spec-label">Runtime</span>
-            <span class="spec-value">Node.js + TS-Node</span>
-          </div>
-        </div>
-        <div class="btn-row">
-          <button id="btn-backend-toggle" class="btn btn-start" onclick="toggleBackend()">
-            <span>⚡</span> <span id="btn-backend-text">Encender Backend</span>
+      <!-- HERO UNIFIED MASTER BUTTON -->
+      <div class="card hero-card">
+        <div class="hero-title">INTERRUPTOR MAESTRO UNIFICADO</div>
+        
+        <button id="master-btn" class="master-btn master-btn-start" onclick="toggleMasterServer()">
+          <span id="master-btn-label">🚀 INICIAR SERVIDOR COMPLETO</span>
+          <span id="master-btn-sub" class="master-subtext">Levanta Docker PostgreSQL + Backend sincronizados</span>
+        </button>
+
+        <div class="quick-actions-row">
+          <button class="btn-sub" onclick="restartMasterServer()" title="Reinicia BD y Backend en orden">
+            <span>🔄</span> Reiniciar Todo
           </button>
-          <button class="btn btn-secondary" onclick="restartBackend()" title="Reiniciar Backend">
-            <span>🔄</span> Reiniciar
+          <button class="btn-sub" onclick="restoreDb()" title="Restaura datos limpios desde init_local_db.sql">
+            <span>📥</span> Restaurar BD (SQL)
           </button>
         </div>
       </div>
 
-      <!-- Database Card -->
+      <!-- Services Status Badges -->
       <div class="card">
-        <div class="card-header">
-          <div class="card-title">
-            <span>🐘</span> PostgreSQL Local en Docker
-          </div>
-          <span id="db-status-tag" class="status-tag off">DETENIDA</span>
+        <div style="font-size: 13px; font-weight: 700; margin-bottom: 12px; display: flex; align-items: center; gap: 8px;">
+          <span>⚙️</span> Componentes Sincronizados
         </div>
-        <div class="spec-grid">
-          <div class="spec-item">
-            <span class="spec-label">Puerto Host</span>
-            <span class="spec-value">5433 (Evita conflicto 5432)</span>
+
+        <div class="services-status-grid">
+          <div class="svc-badge-card">
+            <div class="svc-title">
+              <span>🐘 Docker PostgreSQL</span>
+              <span id="db-state-pill" class="svc-state-pill off">OFF</span>
+            </div>
+            <div class="svc-detail">Puerto :5433 (24 Tablas)</div>
           </div>
-          <div class="spec-item">
-            <span class="spec-label">Contenedor</span>
-            <span class="spec-value">habitik_postgres_local</span>
-          </div>
-          <div class="spec-item">
-            <span class="spec-label">BD Local</span>
-            <span class="spec-value">habitik_local (24 Tablas)</span>
-          </div>
-          <div class="spec-item">
-            <span class="spec-label">Motor</span>
-            <span class="spec-value">Docker Compose (WSL)</span>
+
+          <div class="svc-badge-card">
+            <div class="svc-title">
+              <span>🚀 Backend Express</span>
+              <span id="backend-state-pill" class="svc-state-pill off">OFF</span>
+            </div>
+            <div class="svc-detail">Puerto :3000 (Socket.io)</div>
           </div>
         </div>
-        <div class="btn-row">
-          <button id="btn-db-toggle" class="btn btn-start" onclick="toggleDb()">
-            <span>⚡</span> <span id="btn-db-text">Encender BD</span>
-          </button>
-          <button class="btn btn-secondary" onclick="restoreDb()" title="Restaurar BD limpia">
-            <span>📥</span> Restaurar Tablas
-          </button>
+
+        <div style="margin-top: 10px; font-size: 11px; color: var(--text-muted); display: flex; align-items: center; gap: 6px;">
+          <span>🛡️</span> <span>Guardián Autónomo activo (Auto-healing ante caídas de Docker/BD)</span>
         </div>
       </div>
 
       <!-- Network & Mobile Connection Card -->
       <div class="card">
-        <div class="card-header">
-          <div class="card-title">
-            <span>📡</span> Red Wi-Fi y Conexión Móvil
-          </div>
-          <span class="status-tag on">EN LÍNEA</span>
+        <div style="font-size: 14px; font-weight: 700; margin-bottom: 12px; display: flex; align-items: center; gap: 8px;">
+          <span>📡</span> Red Wi-Fi y Conexión Móvil
         </div>
         
         <div class="network-box">
@@ -943,11 +1085,9 @@ const HTML_DASHBOARD = `
           </div>
         </div>
 
-        <div class="btn-row">
-          <button id="btn-ping" class="btn btn-secondary" onclick="testPingServer()">
-            <span>⚡</span> Probar Conexión (Ping al Servidor)
-          </button>
-        </div>
+        <button id="btn-ping" class="btn-sub" style="width: 100%; padding: 12px;" onclick="testPingServer()">
+          <span>⚡</span> Probar Conexión (Ping al Servidor)
+        </button>
 
         <div id="ping-badge" class="ping-result-badge">
           <span id="ping-icon">🟢</span>
@@ -959,7 +1099,7 @@ const HTML_DASHBOARD = `
           <canvas id="qr-canvas"></canvas>
           <div class="qr-desc">
             <strong style="color: #F8FAFC;">📱 Conectar Celular / Tablet:</strong><br>
-            Abre la app <strong>Habitik</strong>, toca el engranaje en el Login y presiona <strong>"Auto-Detectar en Wi-Fi"</strong> o escanea este código QR con la cámara.
+            Abre la app <strong>Habitik</strong>, toca el botón de servidor en el Login y presiona <strong>"Auto-Detectar en Wi-Fi"</strong> o escanea este código QR con la cámara.
           </div>
         </div>
       </div>
@@ -977,7 +1117,7 @@ const HTML_DASHBOARD = `
             <div class="term-dot td-yellow"></div>
             <div class="term-dot td-green"></div>
           </div>
-          <div class="console-title">habitik-backend:~$ logs --tail</div>
+          <div class="console-title">habitik-server:~$ logs --live</div>
         </div>
         <div class="console-tools">
           <button class="filter-btn active" onclick="setFilter('all', this)">Todos</button>
@@ -1004,7 +1144,7 @@ const HTML_DASHBOARD = `
         <input 
           id="term-input" 
           class="console-input" 
-          placeholder="Escribe un comando: 'ping', 'restart', 'restore', 'clear'..." 
+          placeholder="Escribe un comando: 'start', 'stop', 'restart', 'ping', 'restore', 'clear'..." 
           onkeydown="handleTermInput(event)"
         />
       </div>
@@ -1015,7 +1155,6 @@ const HTML_DASHBOARD = `
 
   <!-- Minimal Offline QR Code Generator Script -->
   <script>
-    // Minimal pure-JS QR code matrix generator for offline LAN usage
     function drawQr(text, canvas) {
       const size = 100;
       canvas.width = size;
@@ -1024,7 +1163,6 @@ const HTML_DASHBOARD = `
       ctx.fillStyle = '#FFFFFF';
       ctx.fillRect(0, 0, size, size);
       
-      // Simple visual pattern representation with dynamic seed from text
       let hash = 0;
       for (let i = 0; i < text.length; i++) hash = ((hash << 5) - hash) + text.charCodeAt(i);
       
@@ -1032,7 +1170,6 @@ const HTML_DASHBOARD = `
       const cellSize = size / grid;
       ctx.fillStyle = '#0F172A';
 
-      // Corner finders
       function drawFinder(x, y) {
         ctx.fillRect(x * cellSize, y * cellSize, 7 * cellSize, 7 * cellSize);
         ctx.fillStyle = '#FFFFFF';
@@ -1044,7 +1181,6 @@ const HTML_DASHBOARD = `
       drawFinder(grid - 7, 0);
       drawFinder(0, grid - 7);
 
-      // Data pseudo-matrix based on actual text bytes
       for (let r = 0; r < grid; r++) {
         for (let c = 0; c < grid; c++) {
           if ((r < 8 && c < 8) || (r < 8 && c > grid - 9) || (r > grid - 9 && c < 8)) continue;
@@ -1059,8 +1195,7 @@ const HTML_DASHBOARD = `
 
   <!-- Client-side Logic -->
   <script>
-    let isBackendOn = false;
-    let isDbOn = false;
+    let systemState = 'STOPPED';
     let autoScroll = true;
     let currentFilter = 'all';
     let currentLogs = [];
@@ -1070,52 +1205,51 @@ const HTML_DASHBOARD = `
         const res = await fetch('/api/status');
         const data = await res.json();
 
-        // Update Backend
-        isBackendOn = data.backendRunning;
-        const bTag = document.getElementById('backend-status-tag');
-        const bBtn = document.getElementById('btn-backend-toggle');
-        const bText = document.getElementById('btn-backend-text');
-        if (isBackendOn) {
-          bTag.className = 'status-tag on';
-          bTag.textContent = 'ONLINE';
-          bBtn.className = 'btn btn-stop';
-          bText.textContent = 'Apagar Backend';
+        systemState = data.systemState;
+        const bRunning = data.backendRunning;
+        const dbRunning = data.dbRunning;
+
+        // Master button update
+        const mBtn = document.getElementById('master-btn');
+        const mLabel = document.getElementById('master-btn-label');
+        const mSub = document.getElementById('master-btn-sub');
+        const gBadge = document.getElementById('global-badge');
+        const gText = document.getElementById('global-status-text');
+
+        if (systemState === 'RUNNING' || (bRunning && dbRunning)) {
+          mBtn.className = 'master-btn master-btn-stop';
+          mLabel.textContent = '🛑 APAGAR SERVIDOR HABITIK';
+          mSub.textContent = 'Detiene de forma segura la BD y el Backend sincronizados';
+          gBadge.className = 'badge-live running';
+          gText.textContent = 'SISTEMA 100% OPERATIVO';
+        } else if (systemState === 'STARTING') {
+          mBtn.className = 'master-btn master-btn-starting';
+          mLabel.textContent = '⏳ INICIANDO SERVIDOR...';
+          mSub.textContent = data.currentStartupStep || 'Sincronizando servicios...';
+          gBadge.className = 'badge-live starting';
+          gText.textContent = 'INICIANDO SERVICIOS...';
+        } else if (systemState === 'STOPPING') {
+          mBtn.className = 'master-btn master-btn-starting';
+          mLabel.textContent = '⏳ DETENIENDO SERVICIOS...';
+          mSub.textContent = 'Liberando puertos y memoria...';
+          gBadge.className = 'badge-live starting';
+          gText.textContent = 'DETENIENDO...';
         } else {
-          bTag.className = 'status-tag off';
-          bTag.textContent = 'OFFLINE';
-          bBtn.className = 'btn btn-start';
-          bText.textContent = 'Encender Backend';
+          mBtn.className = 'master-btn master-btn-start';
+          mLabel.textContent = '🚀 INICIAR SERVIDOR COMPLETO';
+          mSub.textContent = 'Levanta Docker PostgreSQL + Backend sincronizados';
+          gBadge.className = 'badge-live stopped';
+          gText.textContent = 'SISTEMA APAGADO';
         }
 
-        // Update DB
-        isDbOn = data.dbRunning;
-        const dbTag = document.getElementById('db-status-tag');
-        const dbBtn = document.getElementById('btn-db-toggle');
-        const dbText = document.getElementById('btn-db-text');
-        if (isDbOn) {
-          dbTag.className = 'status-tag on';
-          dbTag.textContent = 'CONECTADA';
-          dbBtn.className = 'btn btn-stop';
-          dbText.textContent = 'Detener BD';
-        } else {
-          dbTag.className = 'status-tag off';
-          dbTag.textContent = 'DETENIDA';
-          dbBtn.className = 'btn btn-start';
-          dbText.textContent = 'Encender BD';
-        }
+        // Sub components pills
+        const dbPill = document.getElementById('db-state-pill');
+        dbPill.className = 'svc-state-pill ' + (dbRunning ? 'on' : 'off');
+        dbPill.textContent = dbRunning ? 'ONLINE' : 'OFF';
 
-        // Global status
-        const gStatus = document.getElementById('global-status');
-        if (isBackendOn && isDbOn) {
-          gStatus.textContent = 'SISTEMA OPERATIVO';
-          gStatus.parentElement.style.borderColor = 'rgba(16, 185, 129, 0.4)';
-        } else if (isBackendOn || isDbOn) {
-          gStatus.textContent = 'SISTEMA PARCIAL';
-          gStatus.parentElement.style.borderColor = 'rgba(251, 191, 36, 0.4)';
-        } else {
-          gStatus.textContent = 'SISTEMA DETENIDO';
-          gStatus.parentElement.style.borderColor = 'rgba(239, 68, 68, 0.4)';
-        }
+        const bPill = document.getElementById('backend-state-pill');
+        bPill.className = 'svc-state-pill ' + (bRunning ? 'on' : 'off');
+        bPill.textContent = bRunning ? 'ONLINE' : 'OFF';
 
         // Network IP
         const ip = data.localIp || '127.0.0.1';
@@ -1124,7 +1258,7 @@ const HTML_DASHBOARD = `
         document.getElementById('full-url-text').textContent = fullUrl;
         drawQr(fullUrl, document.getElementById('qr-canvas'));
 
-        // Render logs
+        // Logs
         currentLogs = data.logs || [];
         renderLogs();
       } catch (err) {
@@ -1189,30 +1323,26 @@ const HTML_DASHBOARD = `
       }
     }
 
-    async function toggleBackend() {
-      const endpoint = isBackendOn ? '/api/backend/stop' : '/api/backend/start';
-      await fetch(endpoint, { method: 'POST' });
-      setTimeout(fetchStatus, 500);
+    async function toggleMasterServer() {
+      if (systemState === 'RUNNING') {
+        await fetch('/api/master/stop', { method: 'POST' });
+      } else {
+        await fetch('/api/master/start', { method: 'POST' });
+      }
+      setTimeout(fetchStatus, 400);
     }
 
-    async function restartBackend() {
-      await fetch('/api/backend/restart', { method: 'POST' });
-      setTimeout(fetchStatus, 800);
-    }
-
-    async function toggleDb() {
-      const endpoint = isDbOn ? '/api/db/stop' : '/api/db/start';
-      await fetch(endpoint, { method: 'POST' });
-      setTimeout(fetchStatus, 1000);
+    async function restartMasterServer() {
+      await fetch('/api/master/restart', { method: 'POST' });
+      setTimeout(fetchStatus, 600);
     }
 
     async function restoreDb() {
-      if (!confirm('¿Restaurar la base de datos local con los datos iniciales de init_local_db.sql?')) return;
+      if (!confirm('¿Restaurar las 24 tablas de la base de datos local con los datos limpios de init_local_db.sql?')) return;
       await fetch('/api/db/restore', { method: 'POST' });
       setTimeout(fetchStatus, 1000);
     }
 
-    // Ping al servidor ejecutado del lado del servidor para evitar problemas de CORS en navegador
     async function testPingServer() {
       const badge = document.getElementById('ping-badge');
       const msg = document.getElementById('ping-message');
@@ -1248,7 +1378,7 @@ const HTML_DASHBOARD = `
       const b = document.getElementById('ping-badge');
       b.className = 'ping-result-badge success';
       document.getElementById('ping-icon').textContent = '📋';
-      document.getElementById('ping-message').textContent = '¡IP copiada al portapapeles: ' + ip + '!';
+      document.getElementById('ping-message').textContent = '¡IP copiada: ' + ip + '!';
       b.style.display = 'flex';
       setTimeout(() => b.style.display = 'none', 3000);
     }
@@ -1281,21 +1411,21 @@ const HTML_DASHBOARD = `
         const cmd = e.target.value.trim().toLowerCase();
         e.target.value = '';
         if (!cmd) return;
-        if (cmd === 'ping') testPingServer();
-        else if (cmd === 'restart') restartBackend();
+        if (cmd === 'start') toggleMasterServer();
+        else if (cmd === 'stop') toggleMasterServer();
+        else if (cmd === 'restart') restartMasterServer();
+        else if (cmd === 'ping') testPingServer();
         else if (cmd === 'clear' || cmd === 'cls') clearLogs();
         else if (cmd === 'restore') restoreDb();
-        else if (cmd === 'start') toggleBackend();
-        else if (cmd === 'stop') toggleBackend();
         else if (cmd === 'help') {
-          alert('Comandos disponibles: ping, restart, restore, clear, start, stop');
+          alert('Comandos disponibles: start, stop, restart, ping, restore, clear');
         } else {
-          alert('Comando no reconocido. Prueba con: ping, restart, restore, clear');
+          alert('Comando no reconocido. Prueba con: start, stop, restart, ping, clear');
         }
       }
     }
 
-    setInterval(fetchStatus, 1500);
+    setInterval(fetchStatus, 1400);
     fetchStatus();
   </script>
 </body>
@@ -1334,6 +1464,8 @@ const server = http.createServer(async (req, res) => {
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
+      systemState,
+      currentStartupStep,
       backendRunning,
       dbRunning,
       localIp,
@@ -1345,54 +1477,35 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // Ping interno server-side (inmune a CORS)
+  // Interruptor Maestro: Iniciar Todo
+  if (url === '/api/master/start' && req.method === 'POST') {
+    startFullStack();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true, message: 'Iniciando sistema orquestado...' }));
+    return;
+  }
+
+  // Interruptor Maestro: Detener Todo
+  if (url === '/api/master/stop' && req.method === 'POST') {
+    stopFullStack();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true, message: 'Deteniendo sistema...' }));
+    return;
+  }
+
+  // Interruptor Maestro: Reiniciar Todo
+  if (url === '/api/master/restart' && req.method === 'POST') {
+    restartFullStack();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true, message: 'Reiniciando sistema...' }));
+    return;
+  }
+
+  // Ping interno server-side
   if (url === '/api/ping' && req.method === 'GET') {
     const pingResult = await pingBackendInternal();
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(pingResult));
-    return;
-  }
-
-  // Iniciar Backend
-  if (url === '/api/backend/start' && req.method === 'POST') {
-    startBackend();
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ success: true, message: 'Iniciando backend...' }));
-    return;
-  }
-
-  // Detener Backend
-  if (url === '/api/backend/stop' && req.method === 'POST') {
-    stopBackend();
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ success: true, message: 'Deteniendo backend...' }));
-    return;
-  }
-
-  // Reiniciar Backend
-  if (url === '/api/backend/restart' && req.method === 'POST') {
-    stopBackend();
-    setTimeout(() => {
-      startBackend();
-    }, 600);
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ success: true, message: 'Reiniciando backend...' }));
-    return;
-  }
-
-  // Iniciar BD
-  if (url === '/api/db/start' && req.method === 'POST') {
-    startDatabase();
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ success: true, message: 'Iniciando base de datos...' }));
-    return;
-  }
-
-  // Detener BD
-  if (url === '/api/db/stop' && req.method === 'POST') {
-    stopDatabase();
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ success: true, message: 'Deteniendo base de datos...' }));
     return;
   }
 
