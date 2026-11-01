@@ -140,3 +140,4 @@ $function$;
 
 DROP TRIGGER IF EXISTS tr_nueva_notificacion_habitik ON public.notifications;
 CREATE TRIGGER tr_nueva_notificacion_habitik AFTER INSERT ON public.notifications FOR EACH ROW EXECUTE FUNCTION fn_despachar_evento_habitik();
+

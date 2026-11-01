@@ -23,3 +23,4 @@ async function run() {
 }
 
 run();
+
