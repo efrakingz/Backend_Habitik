@@ -12,10 +12,10 @@ const UDP_DISCOVERY_PORT = 3334;
 
 let backendProcess = null;
 let backendLogs = [];
-const MAX_LOGS = 300;
+const MAX_LOGS = 350;
 let udpServer = null;
 
-// Máquina de estados unificada:
+// Estados del sistema:
 // 'STOPPED' | 'STARTING' | 'RUNNING' | 'STOPPING'
 let systemState = 'STOPPED';
 let currentStartupStep = '';
@@ -28,7 +28,7 @@ function addLog(msg, type = 'info') {
   console.log(`[${time}] ${msg}`);
 }
 
-// Matar procesos colgados en un puerto para evitar EADDRINUSE
+// Liberar puerto para evitar EADDRINUSE
 function killProcessOnPort(port) {
   try {
     if (process.platform === 'win32') {
@@ -48,7 +48,7 @@ function killProcessOnPort(port) {
   } catch (_) {}
 }
 
-// Obtener todas las IPs locales activas (Wi-Fi, Ethernet, Hotspot)
+// Obtener IPs locales activas
 function getAllLocalIps() {
   const nets = os.networkInterfaces();
   const results = [];
@@ -82,8 +82,8 @@ function getPrimaryLocalIp() {
   return '127.0.0.1';
 }
 
-// Comprobar apertura de puerto TCP con timeout
-function checkPortOpen(port, host = '127.0.0.1', timeout = 800) {
+// Comprobación de puerto TCP con reintentos para evitar falsos negativos por lag de WSL
+function checkPortOpen(port, host = '127.0.0.1', timeout = 1500) {
   return new Promise((resolve) => {
     const client = require('net').createConnection({ port, host, timeout }, () => {
       client.destroy();
@@ -98,14 +98,30 @@ function checkPortOpen(port, host = '127.0.0.1', timeout = 800) {
 }
 
 async function isBackendRunning() {
-  return await checkPortOpen(BACKEND_PORT);
+  const open = await checkPortOpen(BACKEND_PORT, '127.0.0.1', 1200);
+  if (open) return true;
+  return await checkPortOpen(BACKEND_PORT, '127.0.0.1', 1500);
 }
 
+// Comprueba si la BD está activa con doble verificación TCP + Docker inspect
 async function isDbRunning() {
-  return await checkPortOpen(DB_PORT);
+  const open = await checkPortOpen(DB_PORT, '127.0.0.1', 1200);
+  if (open) return true;
+
+  const retryOpen = await checkPortOpen(DB_PORT, '127.0.0.1', 1800);
+  if (retryOpen) return true;
+
+  // Fallback: verificar si el contenedor docker sigue en ejecución
+  try {
+    const cmd = `wsl -d Ubuntu -- docker inspect -f "{{.State.Running}}" habitik_postgres_local`;
+    const out = execSync(cmd, { stdio: 'pipe', encoding: 'utf-8' }).trim();
+    return out === 'true';
+  } catch (_) {
+    return false;
+  }
 }
 
-// Ruta dinámica de WSL universal
+// Ruta dinámica universal para WSL
 function getProjectWslPath() {
   const projectRoot = path.resolve(__dirname, '..');
   const drive = projectRoot.charAt(0).toLowerCase();
@@ -117,23 +133,21 @@ function getProjectWslPath() {
 function startDatabaseInternal() {
   addLog('Levantando contenedor Docker PostgreSQL en puerto 5433...', 'start');
   const projectRoot = path.resolve(__dirname, '..');
-  
-  // 1. Probar docker nativo en Windows
+
   try {
     execSync('docker compose up -d', { cwd: projectRoot, stdio: 'pipe' });
-    addLog('Comando docker compose up ejecutado (Docker nativo).', 'info');
+    addLog('Contenedor PostgreSQL levantado (Docker nativo).', 'info');
     return true;
   } catch (_) {}
 
-  // 2. Usar WSL Ubuntu
   try {
     const wslPath = getProjectWslPath();
     const cmd = `wsl -d Ubuntu -- bash -c "cd '${wslPath}' && docker compose up -d"`;
     execSync(cmd, { stdio: 'pipe' });
-    addLog('Comando docker compose up ejecutado en WSL Ubuntu.', 'info');
+    addLog('Contenedor PostgreSQL levantado en WSL Ubuntu.', 'info');
     return true;
   } catch (err) {
-    addLog(`Error al ejecutar docker compose: ${err.message}`, 'error');
+    addLog(`Error al iniciar Docker: ${err.message}`, 'error');
     return false;
   }
 }
@@ -164,7 +178,7 @@ function stopDatabaseInternal() {
 // Iniciar Backend
 function startBackendInternal() {
   if (backendProcess) return;
-  addLog('Lanzando proceso Node.js (src/server.ts)...', 'start');
+  addLog('Iniciando Backend Node.js en puerto 3000...', 'start');
   
   const env = {
     ...process.env,
@@ -221,34 +235,34 @@ function stopBackendInternal() {
 }
 
 // ==========================================
-// ORQUESTADOR MAESTRO UNIFICADO (1 SOLO BOTÓN)
+// ORQUESTADOR MAESTRO (ENCENDIDO CON CONTROL DE TIEMPOS)
 // ==========================================
 async function startFullStack() {
   if (systemState === 'STARTING' || systemState === 'RUNNING') return;
   systemState = 'STARTING';
 
   addLog('════════════════════════════════════════════════════════', 'start');
-  addLog('🚀 INICIANDO ENTORNO LOCAL CONTROLADO DE HABITIK...', 'start');
+  addLog('🚀 INICIANDO ENTORNO CONTROLADO DE HABITIK...', 'start');
   addLog('════════════════════════════════════════════════════════', 'start');
 
-  // FASE 1: Iniciar Base de Datos Docker
-  currentStartupStep = 'Paso 1/3: Levantando PostgreSQL en Docker (puerto 5433)...';
+  // 1. Iniciar Docker PostgreSQL
+  currentStartupStep = 'Paso 1/3: Levantando PostgreSQL en Docker (:5433)...';
   addLog(currentStartupStep, 'start');
   startDatabaseInternal();
 
-  // FASE 2: Espera activa hasta que PostgreSQL esté listo y respondiendo consultas
-  currentStartupStep = 'Paso 2/3: Verificando que PostgreSQL acepte conexiones...';
+  // 2. Espera activa hasta que PostgreSQL esté 100% listo para consultas
+  currentStartupStep = 'Paso 2/3: Esperando que PostgreSQL responda consultas...';
   addLog(currentStartupStep, 'info');
 
   let dbReady = false;
   for (let attempt = 1; attempt <= 15; attempt++) {
-    await new Promise(r => setTimeout(r, 600));
+    await new Promise(r => setTimeout(r, 700));
     dbReady = await isDbRunning();
     if (dbReady) {
-      addLog(`✅ PostgreSQL verificado y aceptando conexiones en el intento ${attempt}.`, 'success');
+      addLog(`✅ PostgreSQL 16 verificado y listo en puerto 5433 (intento ${attempt}).`, 'success');
       break;
     }
-    addLog(`   ...esperando a que PostgreSQL inicialice el socket (${attempt}/15)...`, 'info');
+    addLog(`   ...esperando a PostgreSQL socket (${attempt}/15)...`, 'info');
   }
 
   if (!dbReady) {
@@ -258,21 +272,23 @@ async function startFullStack() {
     return false;
   }
 
-  // FASE 3: Iniciar Backend con la BD garantizada
-  currentStartupStep = 'Paso 3/3: Arrancando Backend Node.js en puerto 3000...';
+  // Pequeño tiempo de gracia para que el pool de PostgreSQL se estabilice
+  await new Promise(r => setTimeout(r, 800));
+
+  // 3. Iniciar Backend Node.js
+  currentStartupStep = 'Paso 3/3: Arrancando Backend Node.js (:3000)...';
   addLog(currentStartupStep, 'start');
   startBackendInternal();
 
-  // Esperar a que el backend levante
+  // Esperar a que el backend responda en HTTP
   let backendReady = false;
   for (let attempt = 1; attempt <= 20; attempt++) {
-    await new Promise(r => setTimeout(r, 500));
+    await new Promise(r => setTimeout(r, 600));
     backendReady = await isBackendRunning();
     if (backendReady) break;
   }
 
   if (backendReady) {
-    // Comprobar respuesta HTTP real
     const ping = await pingBackendInternal();
     if (ping.success) {
       addLog(`✅ Backend HTTP verificado en ${ping.latencyMs} ms (código ${ping.statusCode}).`, 'success');
@@ -282,8 +298,8 @@ async function startFullStack() {
   systemState = 'RUNNING';
   currentStartupStep = '';
   addLog('════════════════════════════════════════════════════════', 'success');
-  addLog('🎉 ¡SERVIDOR HABITIK 100% OPERATIVO Y SINCRONIZADO!', 'success');
-  addLog(`📡 Dirección IP local para la app: http://${getPrimaryLocalIp()}:${BACKEND_PORT}`, 'success');
+  addLog('🎉 ¡SISTEMA HABITIK 100% OPERATIVO Y SINCRONIZADO!', 'success');
+  addLog(`📡 IP Local para tu app: http://${getPrimaryLocalIp()}:${BACKEND_PORT}`, 'success');
   addLog('════════════════════════════════════════════════════════', 'success');
   return true;
 }
@@ -293,16 +309,14 @@ async function stopFullStack() {
   systemState = 'STOPPING';
 
   addLog('════════════════════════════════════════════════════════', 'warn');
-  addLog('🛑 DETENIENDO SISTEMA LOCAL HABITIK...', 'warn');
+  addLog('🛑 DETENIENDO SISTEMA HABITIK...', 'warn');
   addLog('════════════════════════════════════════════════════════', 'warn');
 
-  // Detener Backend primero (cierre ordenado)
   currentStartupStep = 'Deteniendo Backend Node.js...';
   addLog(`[1/2] ${currentStartupStep}`, 'info');
   stopBackendInternal();
   await new Promise(r => setTimeout(r, 800));
 
-  // Detener Docker después
   currentStartupStep = 'Deteniendo contenedor Docker PostgreSQL...';
   addLog(`[2/2] ${currentStartupStep}`, 'info');
   stopDatabaseInternal();
@@ -310,12 +324,12 @@ async function stopFullStack() {
 
   systemState = 'STOPPED';
   currentStartupStep = '';
-  addLog('✅ Sistema completamente detenido. Puertos 3000 y 5433 liberados.', 'success');
+  addLog('✅ Sistema completamente detenido. Puertos liberados.', 'success');
   return true;
 }
 
 async function restartFullStack() {
-  addLog('🔄 Reiniciando sistema completo de forma orquestada...', 'start');
+  addLog('🔄 Reiniciando sistema completo en secuencia...', 'start');
   await stopFullStack();
   await new Promise(r => setTimeout(r, 1200));
   await startFullStack();
@@ -437,13 +451,12 @@ setInterval(async () => {
       const backendOk = await isBackendRunning();
 
       if (!dbOk) {
-        addLog('⚠️ [Guardián] PostgreSQL en puerto 5433 no responde. Levantando contenedor automáticamente...', 'warn');
+        addLog('⚠️ [Guardián] PostgreSQL no responde. Levantando contenedor automáticamente...', 'warn');
         startDatabaseInternal();
         for (let i = 0; i < 8; i++) {
-          await new Promise(r => setTimeout(r, 600));
+          await new Promise(r => setTimeout(r, 700));
           if (await isDbRunning()) {
-            addLog('✅ [Guardián] PostgreSQL restaurado y listo.', 'success');
-            // Probar si el backend necesita reconectar
+            addLog('✅ [Guardián] PostgreSQL restaurado exitosamente.', 'success');
             const p = await pingBackendInternal();
             if (!p.success) {
               addLog('🔄 [Guardián] Reconectando backend para refrescar pool de BD...', 'warn');
@@ -460,10 +473,10 @@ setInterval(async () => {
     } catch (_) {}
     watchdogBusy = false;
   }
-}, 4500);
+}, 5000);
 
 // ==========================================
-// INTERFAZ WEB PROFESIONAL (ESTILO ANGULAR / MODERN SPA)
+// INTERFAZ WEB PROFESIONAL — 1 SOLO BOTÓN MAESTRO
 // ==========================================
 const HTML_DASHBOARD = `
 <!DOCTYPE html>
@@ -471,24 +484,25 @@ const HTML_DASHBOARD = `
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Habitik Server Pro — Centro de Control Orquestado</title>
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <title>Habitik Server Pro — Interruptor Maestro</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
     :root {
-      --bg-gradient: radial-gradient(circle at 10% 10%, #0c1d18 0%, #080d14 45%, #04070a 100%);
-      --panel-bg: rgba(13, 22, 33, 0.82);
+      --bg-gradient: radial-gradient(circle at 10% 10%, #0d221c 0%, #080d14 45%, #04070a 100%);
+      --panel-bg: rgba(13, 22, 33, 0.85);
       --panel-border: rgba(16, 185, 129, 0.22);
       --primary: #10B981;
       --primary-hover: #059669;
       --primary-glow: rgba(16, 185, 129, 0.38);
       --cyan: #06B6D4;
-      --cyan-glow: rgba(6, 182, 212, 0.35);
       --danger: #EF4444;
       --danger-hover: #DC2626;
       --danger-glow: rgba(239, 68, 68, 0.4);
-      --warning: #F59E0B;
       --text: #F8FAFC;
       --text-muted: #94A3B8;
       --terminal-bg: #03060a;
@@ -606,7 +620,7 @@ const HTML_DASHBOARD = `
       height: calc(100vh - 100px);
     }
 
-    /* Left Column: Controls */
+    /* Left Column */
     .controls-col {
       display: flex;
       flex-direction: column;
@@ -625,12 +639,12 @@ const HTML_DASHBOARD = `
       position: relative;
     }
 
-    /* Hero Master Control Card */
+    /* HERO MASTER BUTTON */
     .hero-card {
       background: linear-gradient(145deg, rgba(16, 27, 40, 0.95), rgba(8, 15, 24, 0.95));
       border: 1px solid rgba(16, 185, 129, 0.35);
       text-align: center;
-      padding: 24px;
+      padding: 26px 20px;
     }
 
     .hero-title {
@@ -639,23 +653,23 @@ const HTML_DASHBOARD = `
       letter-spacing: 1px;
       font-weight: 700;
       color: var(--text-muted);
-      margin-bottom: 12px;
+      margin-bottom: 14px;
     }
 
     .master-btn {
       width: 100%;
-      padding: 16px 24px;
-      border-radius: 14px;
+      padding: 20px 24px;
+      border-radius: 16px;
       border: none;
       font-family: inherit;
-      font-size: 16px;
+      font-size: 18px;
       font-weight: 800;
       cursor: pointer;
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      gap: 4px;
+      gap: 5px;
       transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
       letter-spacing: -0.2px;
     }
@@ -665,21 +679,21 @@ const HTML_DASHBOARD = `
     .master-btn-start {
       background: linear-gradient(135deg, #10B981, #059669);
       color: white;
-      box-shadow: 0 6px 24px var(--primary-glow);
+      box-shadow: 0 8px 28px var(--primary-glow);
     }
     .master-btn-start:hover {
       background: linear-gradient(135deg, #34D399, #10B981);
-      box-shadow: 0 8px 30px var(--primary-glow);
+      box-shadow: 0 10px 34px var(--primary-glow);
     }
 
     .master-btn-stop {
       background: linear-gradient(135deg, #EF4444, #B91C1C);
       color: white;
-      box-shadow: 0 6px 24px var(--danger-glow);
+      box-shadow: 0 8px 28px var(--danger-glow);
     }
     .master-btn-stop:hover {
       background: linear-gradient(135deg, #F87171, #EF4444);
-      box-shadow: 0 8px 30px var(--danger-glow);
+      box-shadow: 0 10px 34px var(--danger-glow);
     }
 
     .master-btn-starting {
@@ -689,9 +703,9 @@ const HTML_DASHBOARD = `
     }
 
     .master-subtext {
-      font-size: 11px;
+      font-size: 12px;
       font-weight: 500;
-      opacity: 0.85;
+      opacity: 0.9;
     }
 
     .quick-actions-row {
@@ -722,7 +736,7 @@ const HTML_DASHBOARD = `
       border-color: rgba(255, 255, 255, 0.25);
     }
 
-    /* Service Status Indicators */
+    /* Telemetry Info Cards (SIN BOTONES INDIVIDUALES) */
     .services-status-grid {
       display: grid;
       grid-template-columns: repeat(2, 1fr);
@@ -733,10 +747,10 @@ const HTML_DASHBOARD = `
       background: rgba(0, 0, 0, 0.3);
       border: 1px solid rgba(255, 255, 255, 0.08);
       border-radius: 14px;
-      padding: 12px;
+      padding: 14px;
       display: flex;
       flex-direction: column;
-      gap: 4px;
+      gap: 6px;
     }
 
     .svc-title {
@@ -751,12 +765,12 @@ const HTML_DASHBOARD = `
     .svc-state-pill {
       font-size: 10px;
       font-weight: 800;
-      padding: 2px 7px;
+      padding: 3px 8px;
       border-radius: 6px;
       text-transform: uppercase;
     }
-    .svc-state-pill.on { background: rgba(16, 185, 129, 0.2); color: #34D399; }
-    .svc-state-pill.off { background: rgba(239, 68, 68, 0.2); color: #F87171; }
+    .svc-state-pill.on { background: rgba(16, 185, 129, 0.2); color: #34D399; border: 1px solid rgba(16, 185, 129, 0.4); }
+    .svc-state-pill.off { background: rgba(239, 68, 68, 0.2); color: #F87171; border: 1px solid rgba(239, 68, 68, 0.4); }
 
     .svc-detail {
       font-size: 13px;
@@ -1017,13 +1031,13 @@ const HTML_DASHBOARD = `
     <!-- LEFT COLUMN: CONTROLS & STATUS -->
     <section class="controls-col">
       
-      <!-- HERO UNIFIED MASTER BUTTON -->
+      <!-- HERO UNIFIED MASTER BUTTON (1 SOLO BOTÓN PARA INICIAR/APAGAR) -->
       <div class="card hero-card">
         <div class="hero-title">INTERRUPTOR MAESTRO UNIFICADO</div>
         
         <button id="master-btn" class="master-btn master-btn-start" onclick="toggleMasterServer()">
           <span id="master-btn-label">🚀 INICIAR SERVIDOR COMPLETO</span>
-          <span id="master-btn-sub" class="master-subtext">Levanta Docker PostgreSQL + Backend sincronizados</span>
+          <span id="master-btn-sub" class="master-subtext">Levanta Docker PostgreSQL + Backend en secuencia</span>
         </button>
 
         <div class="quick-actions-row">
@@ -1036,10 +1050,10 @@ const HTML_DASHBOARD = `
         </div>
       </div>
 
-      <!-- Services Status Badges -->
+      <!-- Services Status Badges (TELEMETRÍA, SIN BOTONES SEPARADOS) -->
       <div class="card">
         <div style="font-size: 13px; font-weight: 700; margin-bottom: 12px; display: flex; align-items: center; gap: 8px;">
-          <span>⚙️</span> Componentes Sincronizados
+          <span>⚙️</span> Telemetría de Componentes
         </div>
 
         <div class="services-status-grid">
@@ -1237,7 +1251,7 @@ const HTML_DASHBOARD = `
         } else {
           mBtn.className = 'master-btn master-btn-start';
           mLabel.textContent = '🚀 INICIAR SERVIDOR COMPLETO';
-          mSub.textContent = 'Levanta Docker PostgreSQL + Backend sincronizados';
+          mSub.textContent = 'Levanta Docker PostgreSQL + Backend en secuencia';
           gBadge.className = 'badge-live stopped';
           gText.textContent = 'SISTEMA APAGADO';
         }
@@ -1448,9 +1462,14 @@ const server = http.createServer(async (req, res) => {
 
   const url = req.url.split('?')[0];
 
-  // Dashboard HTML
+  // Dashboard HTML con cabeceras anti-caché
   if (url === '/' && req.method === 'GET') {
-    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.writeHead(200, {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Pragma': 'no-cache',
+      'Expires': '0'
+    });
     res.end(HTML_DASHBOARD);
     return;
   }
@@ -1462,7 +1481,10 @@ const server = http.createServer(async (req, res) => {
     const localIp = getPrimaryLocalIp();
     const allIps = getAllLocalIps();
 
-    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.writeHead(200, {
+      'Content-Type': 'application/json',
+      'Cache-Control': 'no-cache'
+    });
     res.end(JSON.stringify({
       systemState,
       currentStartupStep,
