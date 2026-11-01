@@ -121,3 +121,4 @@ docker compose up -d postgres_local
 docker compose stop postgres_local
 ```
 *(El archivo `database/init_local_db.sql` ya está enlazado en `docker-compose.yml` para cargarse solo al primer inicio).*
+

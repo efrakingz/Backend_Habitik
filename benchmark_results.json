@@ -1,0 +1,221 @@
+{
+  "timestamp": "2026-11-01T13:05:07.933Z",
+  "tests": [
+    {
+      "id": "CP-AUTH-01",
+      "name": "Verificación de Estado del Servidor (Root /)",
+      "passed": true,
+      "latencyMs": 358,
+      "details": "Status 200 OK (2.0.0)"
+    },
+    {
+      "id": "CP-AUTH-02",
+      "name": "Rechazo de Credenciales Inválidas (401)",
+      "passed": true,
+      "latencyMs": 249,
+      "details": "HTTP 401"
+    },
+    {
+      "id": "CP-AUTH-03",
+      "name": "Consulta de Perfil de Usuario con JWT",
+      "passed": true,
+      "latencyMs": 257,
+      "details": "HTTP 200 OK"
+    },
+    {
+      "id": "CP-AUTH-04",
+      "name": "Protección de Rutas sin Token JWT (401)",
+      "passed": true,
+      "latencyMs": 245,
+      "details": "HTTP 401 Rechazado"
+    },
+    {
+      "id": "CP-AUTH-05",
+      "name": "Generación de Código OTP con TTL de 10 min",
+      "passed": true,
+      "latencyMs": 15,
+      "details": "Código emitido con expiración a 10 min"
+    },
+    {
+      "id": "CP-FAM-01",
+      "name": "Emisión de Token QR de Familia (TTL 10 min)",
+      "passed": true,
+      "latencyMs": 12,
+      "details": "Token generado y no usado"
+    },
+    {
+      "id": "CP-FAM-02",
+      "name": "Consumo Único de Token QR (Atómico)",
+      "passed": true,
+      "latencyMs": 10,
+      "details": "Marcado used=true"
+    },
+    {
+      "id": "CP-FAM-03",
+      "name": "Protección contra Replay de Token QR Usado",
+      "passed": true,
+      "latencyMs": 8,
+      "details": "Rechazado (0 filas afectadas)"
+    },
+    {
+      "id": "CP-MURO-01",
+      "name": "Carga de Publicaciones del Feed Familiar",
+      "passed": true,
+      "latencyMs": 251,
+      "details": "HTTP 200"
+    },
+    {
+      "id": "CP-MURO-02",
+      "name": "Reacción Silenciosa en Feed (Idempotente)",
+      "passed": true,
+      "latencyMs": 14,
+      "details": "Reacción guardada: fuego"
+    },
+    {
+      "id": "CP-GAME-01",
+      "name": "Eco-Speedrun Ducha (Validación & Cálculo)",
+      "passed": true,
+      "latencyMs": 255,
+      "details": "HTTP 201 (Iniciada autoritativamente)"
+    },
+    {
+      "id": "CP-GAME-02",
+      "name": "Eco-Puzzle (Estado Terminado & Recompensa)",
+      "passed": true,
+      "latencyMs": 280,
+      "details": "HTTP 200 (Recompensa otorgada)"
+    },
+    {
+      "id": "CP-GAME-03",
+      "name": "Eco-Wordle (Obtención de Palabra del Día)",
+      "passed": true,
+      "latencyMs": 252,
+      "details": "HTTP 200 (Palabra activa: 5 letras)"
+    },
+    {
+      "id": "CP-GAME-04",
+      "name": "Eco-Trivia (Inicio de Sesión y Banco Preguntas)",
+      "passed": true,
+      "latencyMs": 258,
+      "details": "HTTP 201"
+    },
+    {
+      "id": "CP-ECON-01",
+      "name": "Catálogo de Recompensas de la Familia",
+      "passed": true,
+      "latencyMs": 254,
+      "details": "HTTP 200 (Catálogo recuperado)"
+    },
+    {
+      "id": "CP-ECON-02",
+      "name": "Límite de Propuestas (1 por día por usuario)",
+      "passed": true,
+      "latencyMs": 11,
+      "details": "Propuestas hoy: 0"
+    },
+    {
+      "id": "CP-ECON-03",
+      "name": "Límite de Canjes (1 por día por usuario)",
+      "passed": true,
+      "latencyMs": 10,
+      "details": "Canjes hoy: 0"
+    },
+    {
+      "id": "CP-ECON-04",
+      "name": "Bloqueo Concurrente Pesimista (SELECT ... FOR UPDATE)",
+      "passed": true,
+      "latencyMs": 623,
+      "details": "Client 2 bloqueado 623 ms hasta COMMIT de Client 1"
+    },
+    {
+      "id": "CP-INSP-01",
+      "name": "Consulta de Cola de Inspección Fotográfica",
+      "passed": true,
+      "latencyMs": 11,
+      "details": "Evidencias registradas en BD: 11"
+    },
+    {
+      "id": "CP-OCR-01",
+      "name": "Consulta de Boletas de Electricidad y Agua",
+      "passed": true,
+      "latencyMs": 251,
+      "details": "HTTP 200 (Boletas cargadas)"
+    },
+    {
+      "id": "CP-OCR-02",
+      "name": "Consolidación de Consumo (Human-in-the-Loop)",
+      "passed": true,
+      "latencyMs": 9,
+      "details": "Boletas validadas con consumo y monto: 3"
+    },
+    {
+      "id": "CP-NOTIF-01",
+      "name": "Filtro de Ventana de Silencio (22:00 a 09:00)",
+      "passed": true,
+      "latencyMs": 2,
+      "details": "Bloquea a las 23h, permite a las 14h"
+    },
+    {
+      "id": "CP-NOTIF-02",
+      "name": "Límite de Frecuencia Diaria (Max 4 activa, 2 cerrada)",
+      "passed": true,
+      "latencyMs": 1,
+      "details": "Estricta cuota anti-fatiga implementada"
+    }
+  ],
+  "concurrencyResults": {
+    "c10": {
+      "concurrencyLevel": 10,
+      "endpoint": "/feed",
+      "totalRequests": 10,
+      "successCount": 10,
+      "errorCount": 0,
+      "errorRate": "0.0%",
+      "totalTimeMs": 391,
+      "throughputRps": "25.6",
+      "minLatencyMs": 252,
+      "avgLatencyMs": 358,
+      "p50LatencyMs": 375,
+      "p90LatencyMs": 386,
+      "p95LatencyMs": 387,
+      "p99LatencyMs": 387
+    },
+    "c25": {
+      "concurrencyLevel": 25,
+      "endpoint": "/rewards",
+      "totalRequests": 25,
+      "successCount": 25,
+      "errorCount": 0,
+      "errorRate": "0.0%",
+      "totalTimeMs": 412,
+      "throughputRps": "60.7",
+      "minLatencyMs": 250,
+      "avgLatencyMs": 336,
+      "p50LatencyMs": 367,
+      "p90LatencyMs": 382,
+      "p95LatencyMs": 385,
+      "p99LatencyMs": 396
+    },
+    "c50": {
+      "concurrencyLevel": 50,
+      "endpoint": "/",
+      "totalRequests": 50,
+      "successCount": 50,
+      "errorCount": 0,
+      "errorRate": "0.0%",
+      "totalTimeMs": 541,
+      "throughputRps": "92.4",
+      "minLatencyMs": 240,
+      "avgLatencyMs": 322,
+      "p50LatencyMs": 357,
+      "p90LatencyMs": 399,
+      "p95LatencyMs": 410,
+      "p99LatencyMs": 521
+    }
+  },
+  "summary": {
+    "total": 23,
+    "passed": 23,
+    "failed": 0
+  }
+}

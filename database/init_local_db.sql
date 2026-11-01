@@ -6,6 +6,10 @@
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
+CREATE SEQUENCE IF NOT EXISTS public.family_rewards_id_seq;
+CREATE SEQUENCE IF NOT EXISTS public.ecological_words_id_seq;
+CREATE SEQUENCE IF NOT EXISTS public.historial_gamificacion_id_seq;
+
 -- Tabla: public.families
 CREATE TABLE IF NOT EXISTS public.families (
   id UUID DEFAULT public.gen_random_uuid() NOT NULL,
@@ -181,7 +185,8 @@ CREATE TABLE IF NOT EXISTS public.wordle_attempts (
   fecha DATE DEFAULT (CURRENT_DATE AT TIME ZONE 'America/Santiago'::text) NOT NULL,
   intentos JSONB DEFAULT '[]'::jsonb,
   estado VARCHAR DEFAULT 'en_proceso'::character varying,
-  pista_revelada BOOLEAN DEFAULT false
+  pista_revelada BOOLEAN DEFAULT false,
+  CONSTRAINT wordle_attempts_user_id_fecha_key UNIQUE (user_id, fecha)
 );
 
 -- Tabla: public.trivia_questions

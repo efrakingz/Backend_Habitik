@@ -198,3 +198,4 @@ dumpDatabase().catch((err) => {
   console.error('❌ Error volcando la base de datos:', err);
   process.exit(1);
 });
+
