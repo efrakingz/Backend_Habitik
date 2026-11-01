@@ -69,6 +69,10 @@ if (process.env.DATABASE_URL) {
       console.error('⚠️ [PostgreSQL] Error conectando pgListener:', err.message);
     });
 
+  pgListener.on('error', (err) => {
+    console.warn('⚠️ [PostgreSQL] pgListener desconectado o reiniciado:', err.message);
+  });
+
   pgListener.on('notification', (msg) => {
     try {
       if (msg.payload) {
