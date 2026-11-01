@@ -14,6 +14,40 @@ let backendProcess = null;
 let backendLogs = [];
 const MAX_LOGS = 350;
 let udpServer = null;
+let wslKeepAliveProcess = null;
+
+// Mantener activa la VM de WSL 2 mientras el panel esté en ejecución para evitar que se suspenda
+function ensureWslActive() {
+  if (process.platform !== 'win32') return;
+  if (!wslKeepAliveProcess) {
+    try {
+      execSync('wsl -u root -d Ubuntu -- service docker start', { stdio: 'pipe' });
+      wslKeepAliveProcess = spawn('wsl', ['-d', 'Ubuntu', '--', 'bash', '-c', 'while true; do sleep 60; done'], {
+        detached: false,
+        stdio: 'ignore'
+      });
+      wslKeepAliveProcess.on('exit', () => {
+        wslKeepAliveProcess = null;
+      });
+      addLog('Sesión WSL 2 y Docker activas (evita suspensión por inactividad).', 'info');
+    } catch (_) {}
+  }
+}
+
+function stopWslKeepAlive() {
+  if (wslKeepAliveProcess) {
+    try { wslKeepAliveProcess.kill(); } catch (_) {}
+    wslKeepAliveProcess = null;
+  }
+}
+
+process.on('SIGINT', () => {
+  stopWslKeepAlive();
+  process.exit(0);
+});
+process.on('exit', () => {
+  stopWslKeepAlive();
+});
 
 // Estados del sistema:
 // 'STOPPED' | 'STARTING' | 'RUNNING' | 'STOPPING'
@@ -131,6 +165,7 @@ function getProjectWslPath() {
 
 // Iniciar Docker DB
 function startDatabaseInternal() {
+  ensureWslActive();
   addLog('Levantando contenedor Docker PostgreSQL en puerto 5433...', 'start');
   const projectRoot = path.resolve(__dirname, '..');
 
@@ -1555,6 +1590,7 @@ const server = http.createServer(async (req, res) => {
 killProcessOnPort(PORT);
 
 server.listen(PORT, '0.0.0.0', () => {
+  ensureWslActive();
   const primaryIp = getPrimaryLocalIp();
   addLog(`Panel de Control Pro activo en: http://localhost:${PORT}`, 'success');
   addLog(`Accesible en tu red local en: http://${primaryIp}:${PORT}`, 'success');
