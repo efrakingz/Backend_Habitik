@@ -18,9 +18,24 @@ export const getWordleHoy = async (req: Request, res: Response): Promise<void> =
   }
 };
 
+export const postWordleNueva = async (req: Request, res: Response): Promise<void> => {
+  const userId = req.auth?.user_id || req.body.user_id;
+  if (!userId) {
+    res.status(401).json({ message: 'No autenticado.' });
+    return;
+  }
+
+  try {
+    const data = await wordleService.startNewGame(userId);
+    res.status(200).json({ success: true, data });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message || 'Error al iniciar nueva partida.' });
+  }
+};
+
 export const postWordleIntentar = async (req: Request, res: Response): Promise<void> => {
   const userId = req.auth?.user_id || req.body.user_id;
-  const { intento } = req.body;
+  const { intento, sesion_id } = req.body;
 
   if (!userId || !intento) {
     res.status(400).json({ message: 'Faltan datos requeridos (user_id o intento).' });
@@ -28,7 +43,7 @@ export const postWordleIntentar = async (req: Request, res: Response): Promise<v
   }
 
   try {
-    const resultado = await wordleService.submitGuess(userId, intento);
+    const resultado = await wordleService.submitGuess(userId, intento, sesion_id);
     res.status(200).json({ success: true, ...resultado });
   } catch (error: any) {
     res.status(400).json({ success: false, message: error.message || 'Error al procesar el intento.' });
@@ -37,13 +52,14 @@ export const postWordleIntentar = async (req: Request, res: Response): Promise<v
 
 export const postWordlePista = async (req: Request, res: Response): Promise<void> => {
   const userId = req.auth?.user_id || req.body.user_id;
+  const { sesion_id } = req.body || {};
   if (!userId) {
     res.status(401).json({ message: 'No autenticado.' });
     return;
   }
 
   try {
-    const resultado = await wordleService.unlockHint(userId);
+    const resultado = await wordleService.unlockHint(userId, sesion_id);
     res.status(200).json({ success: true, ...resultado });
   } catch (error: any) {
     res.status(400).json({ success: false, message: error.message || 'Error al canjear la pista.' });
