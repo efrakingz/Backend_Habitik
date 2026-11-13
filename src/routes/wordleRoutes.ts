@@ -1,10 +1,11 @@
 import { Router } from 'express';
-import { getWordleHoy, postWordleIntentar, postWordlePista } from '../controllers/wordleController';
+import { getWordleHoy, postWordleIntentar, postWordleNueva, postWordlePista } from '../controllers/wordleController';
 import { verifyToken } from '../middleware/auth';
 
 const router = Router();
 
 router.get('/hoy', verifyToken, getWordleHoy);
+router.post('/nueva', verifyToken, postWordleNueva);
 router.post('/intentar', verifyToken, postWordleIntentar);
 router.post('/pista', verifyToken, postWordlePista);
 

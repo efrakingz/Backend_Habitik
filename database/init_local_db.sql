@@ -186,7 +186,8 @@ CREATE TABLE IF NOT EXISTS public.wordle_attempts (
   intentos JSONB DEFAULT '[]'::jsonb,
   estado VARCHAR DEFAULT 'en_proceso'::character varying,
   pista_revelada BOOLEAN DEFAULT false,
-  CONSTRAINT wordle_attempts_user_id_fecha_key UNIQUE (user_id, fecha)
+  word_id INTEGER,
+  created_at TIMESTAMPTZ DEFAULT now() NOT NULL
 );
 
 -- Tabla: public.trivia_questions
@@ -1131,6 +1132,8 @@ CREATE INDEX IF NOT EXISTS idx_usuario_logros_user ON public.usuario_logros (use
 CREATE INDEX IF NOT EXISTS idx_feed_reacciones_feed_id ON public.feed_reacciones (feed_id);
 CREATE INDEX IF NOT EXISTS idx_feed_reacciones_family_id ON public.feed_reacciones (family_id);
 CREATE INDEX IF NOT EXISTS idx_feed_reacciones_user_id ON public.feed_reacciones (user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_wordle_attempts_active_user_fecha ON public.wordle_attempts (user_id, fecha) WHERE estado = 'en_proceso';
+CREATE INDEX IF NOT EXISTS idx_wordle_attempts_user_fecha_created ON public.wordle_attempts (user_id, fecha, created_at DESC);
     
 
 

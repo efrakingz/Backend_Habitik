@@ -16,6 +16,11 @@ const PERFORMANCE_INDEX_STATEMENTS = [
   `CREATE INDEX IF NOT EXISTS idx_reto_validations_user_estado ON public.reto_validations (user_id, estado, created_at DESC);`,
   `CREATE INDEX IF NOT EXISTS idx_tasks_family_hecho_created ON public.tasks (family_id, hecho, created_at DESC);`,
   `CREATE INDEX IF NOT EXISTS idx_usuario_logros_user_fecha ON public.usuario_logros (user_id, fecha_desbloqueo DESC);`,
+  `ALTER TABLE public.wordle_attempts DROP CONSTRAINT IF EXISTS wordle_attempts_user_id_fecha_key;`,
+  `ALTER TABLE public.wordle_attempts ADD COLUMN IF NOT EXISTS word_id INTEGER;`,
+  `ALTER TABLE public.wordle_attempts ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT now();`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_wordle_attempts_active_user_fecha ON public.wordle_attempts (user_id, fecha) WHERE estado = 'en_proceso';`,
+  `CREATE INDEX IF NOT EXISTS idx_wordle_attempts_user_fecha_created ON public.wordle_attempts (user_id, fecha, created_at DESC);`,
 ];
 
 let indexesEnsured = false;
